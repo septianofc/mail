@@ -1,0 +1,34 @@
+{
+    "name": "septianfr/support-septian",
+    "description": "Support Septian F. R. — Aplikasi Web Manajemen Email Customer Support PHP 8.1+ dengan Google Gmail API OAuth 2.0 & Google App Password",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.1",
+        "ext-pdo": "*",
+        "ext-pdo_mysql": "*",
+        "ext-openssl": "*",
+        "ext-mbstring": "*",
+        "ext-json": "*",
+        "ext-dom": "*",
+        "ext-fileinfo": "*",
+        "google/apiclient": "^2.18"
+    },
+    "suggest": {
+        "ext-imap": "Diperlukan apabila menggunakan mode koneksi Google App Password untuk membaca Inbox/Sent/Drafts via IMAP."
+    },
+    "scripts": {
+        "pre-autoload-dump": "Google\\Task\\Composer::cleanup"
+    },
+    "extra": {
+        "google/apiclient-services": [
+            "Gmail",
+            "Oauth2"
+        ]
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "vendor-dir": "mail/support/vendor"
+    }
+}

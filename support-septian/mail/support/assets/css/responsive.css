@@ -1,0 +1,137 @@
+/* ============================================================================
+   SUPPORT SEPTIAN — Responsive Stylesheet (Tablet, Android & iPhone)
+   Path: /mail/support/assets/css/responsive.css
+   ============================================================================ */
+
+@media (max-width: 1180px) {
+    .stats-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .dashboard-columns,
+    .templates-workspace,
+    .preview-workspace,
+    .two-col-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 900px) {
+    .mobile-menu-btn {
+        display: inline-flex;
+    }
+
+    .app-sidebar {
+        position: fixed;
+        top: var(--header-height);
+        left: 0;
+        bottom: 0;
+        z-index: 60;
+        transform: translateX(-100%);
+        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+    }
+
+    .app-sidebar.is-open {
+        transform: translateX(0);
+    }
+
+    .sidebar-backdrop.is-open {
+        display: block;
+        position: fixed;
+        inset: var(--header-height) 0 0 0;
+        z-index: 50;
+        background: rgba(15, 23, 42, 0.35);
+    }
+
+    .app-main {
+        padding: 18px 16px 36px 16px;
+    }
+
+    .admin-chip-name {
+        display: none;
+    }
+
+    .mail-row {
+        grid-template-columns: 28px 28px 1fr auto;
+        grid-template-rows: auto auto;
+        gap: 4px 8px;
+        padding: 12px 14px;
+    }
+    .mail-row .mail-sender {
+        grid-column: 3 / 4;
+        grid-row: 1;
+    }
+    .mail-row .mail-date {
+        grid-column: 4 / 5;
+        grid-row: 1;
+    }
+    .mail-row .mail-content-col {
+        grid-column: 3 / 5;
+        grid-row: 2;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .mail-row .mail-subject {
+        max-width: 100%;
+    }
+}
+
+@media (max-width: 640px) {
+    .app-header {
+        padding: 0 12px;
+        gap: 8px;
+    }
+
+    .brand-name {
+        font-size: 15px;
+    }
+
+    .conn-indicator {
+        display: none;
+    }
+
+    .header-search input[type="search"] {
+        font-size: 13.5px;
+        padding-left: 34px;
+    }
+    .header-search .search-icon {
+        left: 10px;
+    }
+
+    .page-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .stats-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .form-grid-2,
+    .form-grid-3,
+    .editor-meta-grid,
+    .check-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .connection-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .btn, .tool-btn, .mode-tab, .nav-item {
+        min-height: 40px;
+    }
+
+    .thread-msg-header {
+        flex-direction: column;
+    }
+
+    .preview-stage {
+        padding: 10px;
+    }
+
+    .standalone-preview-frame {
+        height: 600px;
+    }
+}
