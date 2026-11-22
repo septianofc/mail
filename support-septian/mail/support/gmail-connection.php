@@ -30,21 +30,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             log_activity('oauth_config_updated', 'Konfigurasi Google OAuth Client ID/Secret diperbarui.', 'settings');
             set_flash('success', 'Konfigurasi Google OAuth 2.0 berhasil disimpan dengan enkripsi AES-256-GCM.');
         } elseif ($formType === 'save_app_password') {
-            $officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
+            $officialEmail = strtolower(DEFAULT_OFFICIAL_GMAIL);
             $appEmail      = strtolower(trim((string) ($_POST['gmail_app_password_email'] ?? $officialEmail)));
             $appPass       = str_replace(' ', '', trim((string) ($_POST['gmail_app_password_secret'] ?? '')));
-            $smtpHost      = trim((string) ($_POST['gmail_smtp_host'] ?? 'smtp.gmail.com')) ?: 'smtp.gmail.com';
-            $smtpPort      = (string) max(1, (int) ($_POST['gmail_smtp_port'] ?? 465));
-            $smtpEnc       = in_array($_POST['gmail_smtp_encryption'] ?? 'ssl', ['ssl', 'tls'], true) ? $_POST['gmail_smtp_encryption'] : 'ssl';
+            $smtpHost      = 'smtp.gmail.com';
+            $smtpPort      = '465';
+            $smtpEnc       = 'ssl';
             $imapHost      = trim((string) ($_POST['gmail_imap_host'] ?? 'imap.gmail.com')) ?: 'imap.gmail.com';
             $imapPort      = (string) max(1, (int) ($_POST['gmail_imap_port'] ?? 993));
             $activateNow   = !empty($_POST['activate_app_password']);
 
             if ($appEmail !== $officialEmail) {
-                throw new RuntimeException('Email App Password harus sama dengan akun resmi aplikasi: ' . $officialEmail);
+                throw new RuntimeException('Email App Password dan Username SMTP wajib sama persis dengan akun resmi: ' . $officialEmail);
             }
 
-            save_setting('gmail_app_password_email', $appEmail, false, (int) $currentAdmin['id']);
+            save_setting('support_email', $officialEmail, false, (int) $currentAdmin['id']);
+            save_setting('official_name', DEFAULT_OFFICIAL_NAME, false, (int) $currentAdmin['id']);
+            save_setting('gmail_app_password_email', $officialEmail, false, (int) $currentAdmin['id']);
             if ($appPass !== '') {
                 save_setting('gmail_app_password_secret', $appPass, true, (int) $currentAdmin['id']);
             }
@@ -58,8 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 save_setting('mail_connection_mode', 'app_password', false, (int) $currentAdmin['id']);
             }
 
-            log_activity('app_password_updated', 'Konfigurasi Google App Password SMTP/IMAP diperbarui.', 'settings');
-            set_flash('success', 'Pengaturan Google App Password berhasil disimpan secara terenkripsi.');
+            log_activity('app_password_updated', 'Konfigurasi Google App Password (smtp.gmail.com:465 SSL) diperbarui.', 'settings');
+            set_flash('success', 'Pengaturan Google App Password berhasil disimpan (SMTP Gmail: smtp.gmail.com:465 SSL · SMTPAuth aktif).');
         } elseif ($formType === 'switch_mode') {
             $mode = ($_POST['mail_connection_mode'] ?? 'oauth') === 'app_password' ? 'app_password' : 'oauth';
             save_setting('mail_connection_mode', $mode, false, (int) $currentAdmin['id']);
@@ -184,23 +186,27 @@ require __DIR__ . '/includes/header.php';
         <?php endif; ?>
     </section>
 
-    <!-- Panel 2: Google App Password (SMTP + IMAP) -->
+    <!-- Panel 2: Google App Password (PHPMailer SMTP SSL:465 + IMAP) -->
     <section class="card">
         <div class="card-header">
             <div>
-                <h2 class="card-title">2. Google App Password (SMTP + IMAP)</h2>
-                <p class="card-subtitle">Gunakan Sandi Aplikasi Google 16 digit untuk akun resmi tanpa perlu verifikasi layar OAuth</p>
+                <h2 class="card-title">2. Google App Password (PHPMailer SMTP + IMAP)</h2>
+                <p class="card-subtitle">Pengiriman terautentikasi via <code>smtp.gmail.com:465</code> (SSL) agar DKIM Gmail lulus (<code>DKIM=PASS</code>)</p>
             </div>
         </div>
 
         <div class="spec-box">
+            <div class="spec-row">
+                <span class="spec-label">Library PHPMailer</span>
+                <span class="spec-val"><?= $connStatus['phpmailer_installed'] ? '<strong class="text-success">Terpasang (Composer vendor/)</strong>' : '<strong class="text-danger">Belum terpasang (jalankan composer install)</strong>' ?></span>
+            </div>
             <div class="spec-row">
                 <span class="spec-label">Status App Password</span>
                 <span class="spec-val"><?= $connStatus['app_password_set'] ? '<strong class="text-success">Tersimpan Terenkripsi</strong>' : 'Belum dikonfigurasi' ?></span>
             </div>
             <div class="spec-row">
                 <span class="spec-label">Ekstensi PHP IMAP</span>
-                <span class="spec-val"><?= $connStatus['imap_available'] ? 'Aktif (Inbox &amp; Folder siap dibaca)' : 'Tidak aktif (hanya SMTP kirim yang aktif)' ?></span>
+                <span class="spec-val"><?= $connStatus['imap_available'] ? 'Aktif (Inbox &amp; Folder siap dibaca)' : 'Tidak aktif (pengiriman SMTP PHPMailer tetap aktif)' ?></span>
             </div>
             <div class="spec-row">
                 <span class="spec-label">Cara Buat App Password</span>
@@ -213,8 +219,8 @@ require __DIR__ . '/includes/header.php';
             <input type="hidden" name="form_type" value="save_app_password">
 
             <div class="form-group">
-                <label for="gmail_app_password_email">Email Gmail Resmi</label>
-                <input type="email" id="gmail_app_password_email" name="gmail_app_password_email" value="<?= e($settings['gmail_app_password_email'] ?: $connStatus['official_email']) ?>" required>
+                <label for="gmail_app_password_email">Username SMTP &amp; Email Pengirim Resmi (Dikunci)</label>
+                <input type="email" id="gmail_app_password_email" name="gmail_app_password_email" value="<?= e(DEFAULT_OFFICIAL_GMAIL) ?>" readonly required>
             </div>
 
             <div class="form-group">
@@ -227,19 +233,17 @@ require __DIR__ . '/includes/header.php';
 
             <div class="form-grid-3">
                 <div class="form-group">
-                    <label for="gmail_smtp_host">SMTP Host</label>
-                    <input type="text" id="gmail_smtp_host" name="gmail_smtp_host" value="<?= e($settings['gmail_smtp_host']) ?>" required>
+                    <label for="gmail_smtp_host">SMTP Host (Dikunci)</label>
+                    <input type="text" id="gmail_smtp_host" name="gmail_smtp_host" value="smtp.gmail.com" readonly required>
                 </div>
                 <div class="form-group">
-                    <label for="gmail_smtp_port">SMTP Port</label>
-                    <input type="number" id="gmail_smtp_port" name="gmail_smtp_port" value="<?= e($settings['gmail_smtp_port']) ?>" required>
+                    <label for="gmail_smtp_port">SMTP Port (Dikunci)</label>
+                    <input type="number" id="gmail_smtp_port" name="gmail_smtp_port" value="465" readonly required>
                 </div>
                 <div class="form-group">
-                    <label for="gmail_smtp_encryption">Enkripsi</label>
-                    <select id="gmail_smtp_encryption" name="gmail_smtp_encryption">
-                        <option value="ssl" <?= $settings['gmail_smtp_encryption'] === 'ssl' ? 'selected' : '' ?>>SSL (465)</option>
-                        <option value="tls" <?= $settings['gmail_smtp_encryption'] === 'tls' ? 'selected' : '' ?>>STARTTLS (587)</option>
-                    </select>
+                    <label for="gmail_smtp_encryption_display">Enkripsi &amp; Auth</label>
+                    <input type="text" id="gmail_smtp_encryption_display" value="SSL (SMTPS) · SMTPAuth" readonly>
+                    <input type="hidden" name="gmail_smtp_encryption" value="ssl">
                 </div>
             </div>
 
@@ -257,31 +261,151 @@ require __DIR__ . '/includes/header.php';
             <div class="form-group">
                 <label class="inline-check">
                     <input type="checkbox" name="activate_app_password" value="1" <?= $connStatus['mode'] === 'app_password' ? 'checked' : '' ?>>
-                    <span>Aktifkan Google App Password sebagai metode koneksi utama</span>
+                    <span>Aktifkan Google App Password (PHPMailer SMTP SSL:465) sebagai metode utama</span>
                 </label>
             </div>
 
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Simpan Google App Password</button>
-                <button type="button" class="btn btn-secondary" id="btnTestAppPassword">Uji Koneksi SMTP &amp; IMAP</button>
+                <button type="button" class="btn btn-secondary" id="btnTestAppPassword">Jalankan Diagnostik SMTP &amp; IMAP</button>
             </div>
             <div id="testAppPasswordResult" class="test-result-box" hidden></div>
         </form>
     </section>
 </div>
 
+<!-- Panel 3: Diagnostik Pengiriman Email & Tes Pengiriman Tunggal -->
+<section class="card" style="margin-top:20px;">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">3. Diagnostik Pengiriman SMTP Gmail &amp; Tes Kirim Email</h2>
+            <p class="card-subtitle">Verifikasi koneksi SMTP terautentikasi, header pengirim aktual, error SMTP (tanpa password), dan uji kirim 1 email percobaan</p>
+        </div>
+    </div>
+
+    <div class="two-col-grid">
+        <div>
+            <div class="spec-box">
+                <div class="spec-row">
+                    <span class="spec-label">Status Koneksi SMTP</span>
+                    <span class="spec-val" id="diagSmtpConnected">Belum diuji (klik Jalankan Diagnostik)</span>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">Status Autentikasi SMTP</span>
+                    <span class="spec-val" id="diagSmtpAuth">Belum diuji (<code>SMTPAuth = true</code>)</span>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">Email Akun yang Digunakan</span>
+                    <code class="spec-val" id="diagAccountEmail"><?= e(DEFAULT_OFFICIAL_GMAIL) ?></code>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">From Email Aktual</span>
+                    <code class="spec-val" id="diagFromEmail"><?= e(DEFAULT_OFFICIAL_NAME . ' <' . DEFAULT_OFFICIAL_GMAIL . '>') ?></code>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">Metode Pengiriman Aktual</span>
+                    <span class="spec-val" id="diagTransportMethod"><?= $connStatus['mode'] === 'app_password' ? 'PHPMailer SMTP (smtp.gmail.com:465 · SSL · SMTPAuth=true)' : 'Google Gmail API (OAuth 2.0)' ?></span>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">Header Wajib Terverifikasi</span>
+                    <span class="spec-val" id="diagHeaders"><code>From</code>, <code>Sender</code>, <code>Reply-To</code>, <code>Return-Path</code>, <code>Message-ID</code>, <code>MIME-Version: 1.0</code>, <code>Content-Type</code></span>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">Detail Error SMTP (Aman)</span>
+                    <span class="spec-val" id="diagSmtpError">-</span>
+                </div>
+            </div>
+
+            <div class="form-actions" style="margin-top:12px;">
+                <button type="button" class="btn btn-secondary btn-sm" id="btnRunDiagnostics">Jalankan Diagnostik SMTP</button>
+            </div>
+            <pre id="diagTranscript" class="code-textarea" style="margin-top:12px;padding:12px;background:var(--bg-canvas);border:1px solid var(--border-color);border-radius:var(--radius-sm);max-height:200px;overflow:auto;white-space:pre-wrap;" hidden></pre>
+        </div>
+
+        <div>
+            <h3 class="card-title" style="font-size:15px;margin-bottom:6px;">Tes Pengiriman Email (1 Email Percobaan)</h3>
+            <p class="card-subtitle" style="margin-bottom:14px;">Kirim tepat 1 email tes ke alamat Gmail lain milik admin untuk memverifikasi kelulusan DKIM di sisi Gmail penerima (tidak mengirim berulang otomatis).</p>
+
+            <div class="form-group">
+                <label for="diagTestTo">Alamat Email Gmail Tujuan Tes</label>
+                <input type="email" id="diagTestTo" placeholder="contoh: admin.pribadi@gmail.com" autocomplete="email">
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-primary" id="btnSendTestEmail">Kirim 1 Email Tes</button>
+            </div>
+            <div id="testSendResult" class="test-result-box" hidden></div>
+
+            <div class="spec-box" style="margin-top:16px;">
+                <div class="spec-row">
+                    <span class="spec-label">DKIM @gmail.com</span>
+                    <span class="spec-val">Ditangani otomatis oleh Google via <code>smtp.gmail.com:465</code> (tidak perlu DNS DKIM untuk <code>gmail.com</code>).</span>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">Cek Show Original</span>
+                    <span class="spec-val">Di Gmail penerima, buka email tes &rarr; klik ikon <strong>&#8942; (Lainnya)</strong> &rarr; <strong>Tampilkan Asli / Show Original</strong> &rarr; pastikan <code>DKIM: PASS</code> dengan domain <code>gmail.com</code>.</span>
+                </div>
+                <div class="spec-row">
+                    <span class="spec-label">Jika Pakai @septianfr.web.id</span>
+                    <span class="spec-val">Hanya jika mengirim sebagai domain sendiri, wajib lengkapi record DNS <strong>SPF</strong>, <strong>DKIM</strong>, dan <strong>DMARC</strong>.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const btnTest = document.getElementById('btnTestAppPassword');
-    const resultBox = document.getElementById('testAppPasswordResult');
-    if (!btnTest) return;
+    const btnTest       = document.getElementById('btnTestAppPassword');
+    const btnRunDiag    = document.getElementById('btnRunDiagnostics');
+    const resultBox     = document.getElementById('testAppPasswordResult');
+    const diagConn      = document.getElementById('diagSmtpConnected');
+    const diagAuth      = document.getElementById('diagSmtpAuth');
+    const diagAccount   = document.getElementById('diagAccountEmail');
+    const diagFrom      = document.getElementById('diagFromEmail');
+    const diagMethod    = document.getElementById('diagTransportMethod');
+    const diagErr       = document.getElementById('diagSmtpError');
+    const diagHeaders   = document.getElementById('diagHeaders');
+    const diagTrace     = document.getElementById('diagTranscript');
 
-    btnTest.addEventListener('click', async function () {
-        btnTest.disabled = true;
-        btnTest.textContent = 'Menguji koneksi...';
+    const btnSendTest   = document.getElementById('btnSendTestEmail');
+    const testToInput   = document.getElementById('diagTestTo');
+    const testSendBox   = document.getElementById('testSendResult');
+
+    function updateDiagView(res) {
+        if (!res) return;
+        diagConn.innerHTML = res.smtp_connected
+            ? '<strong class="text-success">Terhubung (smtp.gmail.com:465 SSL)</strong>'
+            : '<strong class="text-danger">Gagal Terhubung</strong>';
+        diagAuth.innerHTML = res.smtp_authenticated
+            ? '<strong class="text-success">Terautentikasi (SMTPAuth=true)</strong>'
+            : '<strong class="text-danger">Gagal Autentikasi</strong>';
+        if (res.account_email) diagAccount.textContent = res.account_email;
+        if (res.from_email) {
+            diagFrom.textContent = (res.from_name || 'Support Septian F. R.') + ' <' + res.from_email + '>';
+        }
+        if (res.transport_method) diagMethod.textContent = res.transport_method;
+        diagErr.textContent = res.smtp_error ? res.smtp_error : '-';
+        diagErr.className = 'spec-val ' + (res.smtp_error ? 'text-danger' : 'text-success');
+
+        if (res.headers_verified && Object.keys(res.headers_verified).length > 0) {
+            diagHeaders.textContent = Object.entries(res.headers_verified)
+                .map(([k, v]) => k + ': ' + v)
+                .join(' | ');
+        }
+
+        if (res.smtp_transcript) {
+            diagTrace.hidden = false;
+            diagTrace.textContent = res.smtp_transcript;
+        }
+    }
+
+    async function runDiagnostics(triggerBtn, originalLabel) {
+        triggerBtn.disabled = true;
+        triggerBtn.textContent = 'Menguji SMTP Gmail...';
         resultBox.hidden = false;
         resultBox.className = 'test-result-box';
-        resultBox.textContent = 'Menghubungi server SMTP & IMAP Gmail...';
+        resultBox.textContent = 'Menghubungi ssl://smtp.gmail.com:465 via PHPMailer...';
 
         try {
             const payload = {
@@ -289,16 +413,70 @@ document.addEventListener('DOMContentLoaded', function () {
                 app_password: document.getElementById('gmail_app_password_secret').value
             };
             const res = await window.SupportApp.apiPost('api/test-app-password.php', payload);
+            updateDiagView(res);
             resultBox.className = 'test-result-box ' + (res.ok ? 'is-ok' : 'is-err');
-            resultBox.textContent = res.message || (res.ok ? 'Koneksi berhasil!' : 'Koneksi gagal.');
+            resultBox.textContent = res.message || (res.ok ? 'Diagnostik SMTP berhasil!' : 'Diagnostik SMTP gagal.');
         } catch (err) {
             resultBox.className = 'test-result-box is-err';
-            resultBox.textContent = err.message || 'Gagal menguji koneksi.';
+            resultBox.textContent = err.message || 'Gagal menjalankan diagnostik.';
+            diagConn.innerHTML = '<strong class="text-danger">Gagal</strong>';
+            diagAuth.innerHTML = '<strong class="text-danger">Gagal</strong>';
+            diagErr.textContent = err.message || 'Gagal menguji koneksi.';
+            diagErr.className = 'spec-val text-danger';
         } finally {
-            btnTest.disabled = false;
-            btnTest.textContent = 'Uji Koneksi SMTP & IMAP';
+            triggerBtn.disabled = false;
+            triggerBtn.textContent = originalLabel;
         }
-    });
+    }
+
+    if (btnTest) {
+        btnTest.addEventListener('click', () => runDiagnostics(btnTest, 'Jalankan Diagnostik SMTP & IMAP'));
+    }
+    if (btnRunDiag) {
+        btnRunDiag.addEventListener('click', () => runDiagnostics(btnRunDiag, 'Jalankan Diagnostik SMTP'));
+    }
+
+    if (btnSendTest && testToInput) {
+        btnSendTest.addEventListener('click', async function () {
+            const target = testToInput.value.trim();
+            if (!target || !target.includes('@')) {
+                window.SupportApp.showToast('Masukkan alamat email Gmail tujuan tes yang valid.', 'error');
+                testToInput.focus();
+                return;
+            }
+
+            const confirmed = await window.SupportApp.confirmModal({
+                title: 'Konfirmasi Kirim 1 Email Tes',
+                body: 'Sistem akan mengirim <strong>1 email percobaan</strong> dari <code>support.septianfr@gmail.com</code> (Support Septian F. R.) ke <strong>' +
+                    window.SupportApp.escapeHtml(target) + '</strong>.',
+                okText: 'Kirim 1 Email Tes'
+            });
+            if (!confirmed) return;
+
+            btnSendTest.disabled = true;
+            btnSendTest.textContent = 'Mengirim 1 email tes...';
+            testSendBox.hidden = false;
+            testSendBox.className = 'test-result-box';
+            testSendBox.textContent = 'Mengirim email tes melalui koneksi Gmail terautentikasi...';
+
+            try {
+                const res = await window.SupportApp.apiPost('api/test-send.php', { test_to: target });
+                updateDiagView(res);
+                testSendBox.className = 'test-result-box ' + (res.ok ? 'is-ok' : 'is-err');
+                testSendBox.textContent = res.message || '1 email tes berhasil dikirim.';
+                window.SupportApp.showToast('1 email tes berhasil dikirim.', 'success');
+            } catch (err) {
+                testSendBox.className = 'test-result-box is-err';
+                testSendBox.textContent = err.message || 'Pengiriman email tes gagal.';
+                diagErr.textContent = err.message || 'Pengiriman gagal.';
+                diagErr.className = 'spec-val text-danger';
+                window.SupportApp.showToast(err.message || 'Pengiriman email tes gagal.', 'error');
+            } finally {
+                btnSendTest.disabled = false;
+                btnSendTest.textContent = 'Kirim 1 Email Tes';
+            }
+        });
+    }
 });
 </script>
 

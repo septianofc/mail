@@ -299,6 +299,7 @@ function get_mail_connection_status(): array
 
     $appPassEmail  = strtolower(trim(get_setting('gmail_app_password_email', $officialEmail)));
     $appPassSet    = trim(get_setting('gmail_app_password_secret', '')) !== '';
+    $phpmailerInstalled = class_exists(\PHPMailer\PHPMailer\PHPMailer::class);
     $imapAvailable = function_exists('imap_open');
 
     $oauthConnected = $oauthToken !== null && $oauthToken['status'] === 'connected';
@@ -310,12 +311,16 @@ function get_mail_connection_status(): array
     $notice      = '';
 
     if ($mode === 'app_password') {
-        if ($appPassSet && $appPassEmail === $officialEmail) {
+        if (!$phpmailerInstalled) {
+            $activeLabel = 'PHPMailer Belum Terpasang';
+            $activeBadge = 'warning';
+            $notice      = 'Library phpmailer/phpmailer belum ditemukan di vendor/. Jalankan "composer install --no-dev --optimize-autoloader" lalu unggah folder vendor/.';
+        } elseif ($appPassSet && $appPassEmail === $officialEmail) {
             $activeReady = true;
-            $activeLabel = 'Terhubung via Google App Password';
+            $activeLabel = 'Terhubung via PHPMailer SMTP Gmail (SSL:465)';
             $activeBadge = 'connected';
             if (!$imapAvailable) {
-                $notice = 'SMTP siap mengirim email. Ekstensi PHP IMAP belum aktif di server untuk membaca kotak masuk via App Password (disarankan aktifkan php-imap atau gunakan mode OAuth 2.0).';
+                $notice = 'PHPMailer SMTP Gmail (smtp.gmail.com:465 SSL) siap mengirim email. Ekstensi PHP IMAP belum aktif di server untuk membaca kotak masuk via App Password (disarankan aktifkan php-imap atau gunakan mode OAuth 2.0).';
             }
         } else {
             $notice = 'Google App Password belum dikonfigurasi untuk akun resmi ' . $officialEmail . '.';
@@ -343,21 +348,22 @@ function get_mail_connection_status(): array
     }
 
     return [
-        'mode'               => $mode,
-        'official_email'     => $officialEmail,
-        'active_ready'       => $activeReady,
-        'active_label'       => $activeLabel,
-        'active_badge'       => $activeBadge,
-        'notice'             => $notice,
-        'sdk_installed'      => $sdkInstalled,
-        'oauth_configured'   => $oauthConfigured,
-        'oauth_connected'    => $oauthConnected,
-        'oauth_revoked'      => $oauthRevoked,
-        'oauth_expires_at'   => $oauthToken['expires_at'] ?? null,
-        'oauth_last_refresh' => $oauthToken['last_refreshed_at'] ?? null,
-        'oauth_last_error'   => $oauthToken['last_error'] ?? null,
-        'app_password_set'   => $appPassSet,
-        'app_password_email' => $appPassEmail,
-        'imap_available'     => $imapAvailable,
+        'mode'                => $mode,
+        'official_email'      => $officialEmail,
+        'active_ready'        => $activeReady,
+        'active_label'        => $activeLabel,
+        'active_badge'        => $activeBadge,
+        'notice'              => $notice,
+        'sdk_installed'       => $sdkInstalled,
+        'phpmailer_installed' => $phpmailerInstalled,
+        'oauth_configured'    => $oauthConfigured,
+        'oauth_connected'     => $oauthConnected,
+        'oauth_revoked'       => $oauthRevoked,
+        'oauth_expires_at'    => $oauthToken['expires_at'] ?? null,
+        'oauth_last_refresh'  => $oauthToken['last_refreshed_at'] ?? null,
+        'oauth_last_error'    => $oauthToken['last_error'] ?? null,
+        'app_password_set'    => $appPassSet,
+        'app_password_email'  => $appPassEmail,
+        'imap_available'      => $imapAvailable,
     ];
 }

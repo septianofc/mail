@@ -52,7 +52,8 @@ $checks = [
     'Ekstensi OpenSSL (AES-256-GCM)'       => extension_loaded('openssl'),
     'Ekstensi DOM & Fileinfo'              => extension_loaded('dom') && extension_loaded('fileinfo'),
     'Folder storage/ dapat ditulis'        => is_dir(STORAGE_PATH) && is_writable(STORAGE_PATH),
-    'Google API PHP Client (vendor/)'      => is_file(APP_ROOT . '/vendor/autoload.php'),
+    'Google API PHP Client (vendor/)'      => class_exists(\Google\Client::class),
+    'PHPMailer SMTP (vendor/)'             => class_exists(\PHPMailer\PHPMailer\PHPMailer::class),
     'Ekstensi PHP IMAP (opsional App Pass)'=> extension_loaded('imap'),
 ];
 
@@ -152,15 +153,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $plainSettings = [
                     'app_name'                 => DEFAULT_APP_NAME,
-                    'official_name'            => $formData['official_name'],
-                    'support_email'            => strtolower($formData['support_email']),
+                    'official_name'            => DEFAULT_OFFICIAL_NAME,
+                    'support_email'            => strtolower(DEFAULT_OFFICIAL_GMAIL),
                     'website_url'              => safe_http_url($formData['website_url'], DEFAULT_WEBSITE_URL),
                     'app_url'                  => DEFAULT_APP_URL,
                     'logo_url'                 => safe_http_url($formData['logo_url'], DEFAULT_LOGO_URL),
                     'official_address'         => $formData['official_address'],
                     'mail_connection_mode'     => in_array($formData['mail_mode'], ['oauth', 'app_password'], true) ? $formData['mail_mode'] : 'oauth',
                     'gmail_oauth_client_id'    => $formData['oauth_client_id'],
-                    'gmail_app_password_email' => strtolower($formData['support_email']),
+                    'gmail_app_password_email' => strtolower(DEFAULT_OFFICIAL_GMAIL),
+                    'gmail_smtp_host'          => 'smtp.gmail.com',
+                    'gmail_smtp_port'          => '465',
+                    'gmail_smtp_encryption'    => 'ssl',
                 ];
 
                 foreach ($plainSettings as $sk => $sv) {
@@ -337,12 +341,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <h2 class="card-title">4. Identitas Resmi Support Septian F. R.</h2>
             <div class="form-grid-2">
                 <div class="form-group">
-                    <label for="official_name">Nama Identitas Resmi</label>
-                    <input type="text" id="official_name" name="official_name" value="<?= e($formData['official_name']) ?>" required>
+                    <label for="official_name">Nama Identitas Resmi (From Name)</label>
+                    <input type="text" id="official_name" name="official_name" value="<?= e(DEFAULT_OFFICIAL_NAME) ?>" readonly required>
                 </div>
                 <div class="form-group">
-                    <label for="support_email">Email Gmail Resmi</label>
-                    <input type="email" id="support_email" name="support_email" value="<?= e($formData['support_email']) ?>" required>
+                    <label for="support_email">Email Gmail Resmi (From &amp; SMTP Username)</label>
+                    <input type="email" id="support_email" name="support_email" value="<?= e(DEFAULT_OFFICIAL_GMAIL) ?>" readonly required>
                 </div>
                 <div class="form-group">
                     <label for="website_url">Website Resmi</label>

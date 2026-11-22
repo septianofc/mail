@@ -23,7 +23,7 @@ Aplikasi web manajemen email resmi untuk **Support Septian F. R.** yang terhubun
 
 1. **Integrasi Gmail Sungguhan (Dual Mode)**:
    - **Google Gmail API (OAuth 2.0 Web Application)** menggunakan `google/apiclient`, dengan verifikasi `state` anti-CSRF, auto-refresh token, deteksi token dicabut, serta validasi ketat bahwa akun yang terhubung wajib `support.septianfr@gmail.com`.
-   - **Google App Password (SMTP + IMAP)** menggunakan Sandi Aplikasi Google 16 digit (terenkripsi AES-256-GCM) lengkap dengan tombol **Uji Koneksi SMTP & IMAP**.
+   - **Google App Password (PHPMailer SMTP SSL:465 + IMAP)** menggunakan `phpmailer/phpmailer` ke `smtp.gmail.com:465` (`ENCRYPTION_SMTPS`, `SMTPAuth = true`) dengan identitas `Support Septian F. R. <support.septianfr@gmail.com>` sehingga penandatanganan DKIM dikelola resmi oleh server Google (`DKIM=PASS`), lengkap dengan **Panel Diagnostik SMTP** & tombol **Kirim 1 Email Tes**.
 2. **Fitur Email Lengkap**:
    - Kotak Masuk (Inbox), Terkirim (Sent), Draft, Berbintang (Starred), Spam, Sampah (Trash).
    - Membaca thread percakapan lengkap dengan sanitasi HTML anti-XSS.
@@ -41,14 +41,14 @@ Aplikasi web manajemen email resmi untuk **Support Septian F. R.** yang terhubun
 
 ## Instalasi Cepat
 
-### 1. Instalasi Library Google API PHP Client (Composer)
+### 1. Instalasi Library Google API PHP Client & PHPMailer (Composer)
 Jalankan perintah berikut di folder root paket `support-septian/`:
 
 ```bash
 composer install --no-dev --optimize-autoloader
 ```
 
-Perintah tersebut otomatis memasang `google/apiclient` ke dalam `mail/support/vendor/` dan membersihkan service Google selain `Gmail` & `Oauth2` agar ukuran folder `vendor/` tetap ringan saat diunggah ke shared hosting.
+Perintah tersebut otomatis memasang `google/apiclient` dan `phpmailer/phpmailer` ke dalam `mail/support/vendor/` serta membersihkan service Google selain `Gmail` & `Oauth2` agar ukuran folder `vendor/` tetap ringan saat diunggah ke shared hosting.
 
 ### 2. Unggah ke Hosting PHP
 Unggah isi folder `mail/support/` ke direktori:
@@ -81,9 +81,10 @@ Isi:
    - **Authorized redirect URIs**: `https://septianfr.web.id/mail/support/oauth/callback.php`
 5. Masukkan Client ID dan Client Secret pada halaman **Koneksi Gmail**, lalu klik **Hubungkan Gmail**.
 
-### 5. Alternatif: Konfigurasi Google App Password
+### 5. Alternatif: Konfigurasi Google App Password (PHPMailer SMTP SSL:465)
 1. Buka akun Google `support.septianfr@gmail.com` &rarr; **Security** &rarr; aktifkan **2-Step Verification**.
 2. Buka menu **App Passwords**, buat sandi aplikasi bernama `Support Septian`.
-3. Masuk ke halaman **Koneksi Gmail** di aplikasi Support Septian, masukkan 16 karakter App Password tersebut, klik **Uji Koneksi SMTP & IMAP**, lalu simpan & aktifkan.
+3. Masuk ke halaman **Koneksi Gmail** di aplikasi Support Septian, masukkan 16 karakter App Password tersebut, klik **Jalankan Diagnostik SMTP & IMAP**, lalu simpan & aktifkan.
+4. Gunakan panel **Tes Pengiriman Email (1 Email Percobaan)** untuk mengirim 1 email tes ke Gmail admin lain, lalu periksa **Show Original (Tampilkan Asli)** di Gmail penerima untuk memastikan `Authentication-Results` menampilkan `DKIM=PASS`.
 
 Lihat `DEPLOYMENT.md` untuk panduan lengkap deployment pada cPanel / Shared Hosting PHP.

@@ -1,10 +1,10 @@
 <?php
 /**
- * Support Septian — Google App Password Mail Transport (Pure PHP SMTP + PHP IMAP)
+ * Support Septian — Google App Password Mail Transport (PHPMailer SMTP SSL:465 + PHP IMAP)
  *
- * Memungkinkan Support Septian terhubung ke Gmail menggunakan Google App Password 16 digit:
- * - Pengiriman email via SMTP TLS/SSL langsung ke smtp.gmail.com (tanpa library tambahan!)
- * - Pembacaan folder Gmail (Inbox, Sent, Drafts, Starred, Spam, Trash) via PHP IMAP (imap.gmail.com:993)
+ * Seluruh pengiriman SMTP menggunakan PHPMailer terautentikasi ke smtp.gmail.com:465 (SSL),
+ * bukan PHP mail(), sendmail, atau SMTP lokal hosting.
+ * Penandatanganan DKIM untuk support.septianfr@gmail.com ditangani otomatis oleh server Google.
  */
 
 declare(strict_types=1);
@@ -18,212 +18,415 @@ require_once __DIR__ . '/database.php';
 require_once __DIR__ . '/functions.php';
 
 /**
- * Ambil kredensial App Password (hanya di sisi server, tidak pernah dikirim ke browser).
+ * Cek apakah library PHPMailer (via Composer) sudah terpasang.
  */
-function app_password_credentials(): array
+function is_phpmailer_installed(): bool
 {
-    $officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
-    $email         = strtolower(trim(get_setting('gmail_app_password_email', $officialEmail)));
-    $password      = str_replace(' ', '', trim(get_setting('gmail_app_password_secret', '')));
+    return class_exists(\PHPMailer\PHPMailer\PHPMailer::class)
+        && class_exists(\PHPMailer\PHPMailer\SMTP::class);
+}
+
+/**
+ * Ambil kredensial App Password resmi.
+ * Username SMTP & From Email dikunci ketat ke support.septianfr@gmail.com agar DKIM Gmail valid.
+ */
+function app_password_credentials(?string $overrideEmail = null, ?string $overridePassword = null, bool $requirePassword = true): array
+{
+    $officialEmail = strtolower(DEFAULT_OFFICIAL_GMAIL);
+    $email         = strtolower(trim($overrideEmail ?? get_setting('gmail_app_password_email', $officialEmail)));
+    $password      = str_replace(' ', '', trim($overridePassword ?? get_setting('gmail_app_password_secret', '')));
+
+    if ($email === '') {
+        $email = $officialEmail;
+    }
 
     if ($email !== $officialEmail) {
-        throw new RuntimeException('Email Google App Password harus menggunakan akun resmi: ' . $officialEmail);
+        throw new RuntimeException(
+            'Username SMTP dan From Email wajib sama persis dengan akun resmi ' . $officialEmail . '.'
+        );
     }
-    if ($password === '') {
+
+    if ($requirePassword && $password === '') {
         throw new RuntimeException('Google App Password belum diisi pada halaman Pengaturan / Koneksi Gmail.');
     }
 
     return [
-        'email'      => $email,
+        'email'      => $officialEmail,
+        'from_name'  => DEFAULT_OFFICIAL_NAME,
         'password'   => $password,
-        'smtp_host'  => get_setting('gmail_smtp_host', 'smtp.gmail.com') ?: 'smtp.gmail.com',
-        'smtp_port'  => (int) (get_setting('gmail_smtp_port', '465') ?: 465),
-        'smtp_enc'   => strtolower(get_setting('gmail_smtp_encryption', 'ssl') ?: 'ssl'),
+        'smtp_host'  => 'smtp.gmail.com',
+        'smtp_port'  => 465,
+        'smtp_enc'   => 'ssl',
+        'smtp_auth'  => true,
         'imap_host'  => get_setting('gmail_imap_host', 'imap.gmail.com') ?: 'imap.gmail.com',
         'imap_port'  => (int) (get_setting('gmail_imap_port', '993') ?: 993),
     ];
 }
 
 /**
- * Baca respons multi-baris dari socket SMTP.
+ * Sanitasi log debug SMTP agar password / token base64 AUTH tidak pernah muncul.
  */
-function smtp_read_response($socket): string
+function sanitize_smtp_debug_line(string $line, string $secretPassword = ''): string
 {
-    $response = '';
-    while (($line = fgets($socket, 1024)) !== false) {
-        $response .= $line;
-        if (strlen($line) < 4 || $line[3] === ' ') {
-            break;
+    $clean = trim($line);
+    if ($secretPassword !== '') {
+        $clean = str_replace($secretPassword, '[REDACTED]', $clean);
+        $clean = str_replace(base64_encode($secretPassword), '[REDACTED_B64]', $clean);
+        $plainAuth = base64_encode("\0" . DEFAULT_OFFICIAL_GMAIL . "\0" . $secretPassword);
+        $clean = str_replace($plainAuth, '[REDACTED_AUTH]', $clean);
+    }
+    return redact_sensitive_text($clean);
+}
+
+/**
+ * Buat instance PHPMailer yang terkonfigurasi ketat untuk SMTP Gmail (SSL port 465, SMTPAuth=true).
+ */
+function phpmailer_create_configured(array $creds, bool $captureDebug = false, array &$debugLog = []): \PHPMailer\PHPMailer\PHPMailer
+{
+    if (!is_phpmailer_installed()) {
+        throw new RuntimeException(
+            'Library PHPMailer belum terpasang di vendor/. Jalankan "composer install --no-dev --optimize-autoloader" lalu unggah folder mail/support/vendor/ ke hosting.'
+        );
+    }
+
+    $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+
+    // Pastikan menggunakan SMTP Gmail terautentikasi — bukan mail(), sendmail, atau qmail
+    $mail->isSMTP();
+    $mail->Host        = 'smtp.gmail.com';
+    $mail->Port        = 465;
+    $mail->SMTPSecure  = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS; // SSL
+    $mail->SMTPAutoTLS = false;
+    $mail->SMTPAuth    = true;
+    $mail->Username    = DEFAULT_OFFICIAL_GMAIL;
+    $mail->Password    = $creds['password'];
+    $mail->Timeout     = 25;
+    $mail->Hostname    = 'gmail.com';
+    $mail->Helo        = 'septianfr.web.id';
+    $mail->XMailer     = 'Support Septian Mailer';
+
+    // Pastikan tidak ada DKIM manual yang tidak valid (DKIM ditangani server Google)
+    $mail->DKIM_domain         = '';
+    $mail->DKIM_private        = '';
+    $mail->DKIM_private_string = '';
+    $mail->DKIM_selector       = '';
+    $mail->DKIM_passphrase     = '';
+
+    // Bersihkan header/penerima agar tidak pernah terjadi duplikasi header From
+    $mail->clearAllRecipients();
+    $mail->clearReplyTos();
+    $mail->clearAttachments();
+    $mail->clearCustomHeaders();
+
+    // Set From, Sender (Return-Path), dan Reply-To identik ke akun resmi
+    $mail->CharSet  = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+    $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
+    $mail->setFrom(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME, true);
+    $mail->Sender = DEFAULT_OFFICIAL_GMAIL;
+    $mail->addReplyTo(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME);
+
+    if ($captureDebug) {
+        $secret = $creds['password'];
+        $mail->SMTPDebug = \PHPMailer\PHPMailer\SMTP::DEBUG_SERVER;
+        $mail->Debugoutput = static function (string $str, int $level) use (&$debugLog, $secret): void {
+            $safe = sanitize_smtp_debug_line($str, $secret);
+            if ($safe !== '') {
+                $debugLog[] = $safe;
+            }
+        };
+    } else {
+        $mail->SMTPDebug = \PHPMailer\PHPMailer\SMTP::DEBUG_OFF;
+    }
+
+    return $mail;
+}
+
+/**
+ * Kirim email melalui PHPMailer SMTP Gmail terautentikasi (smtp.gmail.com:465 SSL).
+ */
+function phpmailer_send_email(array $params, bool $captureDebug = false): array
+{
+    $creds    = app_password_credentials();
+    $debugLog = [];
+    $mail     = phpmailer_create_configured($creds, $captureDebug, $debugLog);
+
+    $toList      = $params['to'] ?? [];
+    $ccList      = $params['cc'] ?? [];
+    $bccList     = $params['bcc'] ?? [];
+    $subject     = (string) ($params['subject'] ?? '(Tanpa Subjek)');
+    $htmlContent = (string) ($params['html'] ?? '');
+    $plainText   = (string) ($params['plain'] ?? html_to_plain_text($htmlContent));
+    $inReplyTo   = trim((string) ($params['in_reply_to'] ?? ''));
+    $references  = trim((string) ($params['references'] ?? ''));
+    $attachments = $params['attachments'] ?? [];
+
+    foreach ($toList as $rcpt) {
+        $mail->addAddress($rcpt);
+    }
+    foreach ($ccList as $cc) {
+        $mail->addCC($cc);
+    }
+    foreach ($bccList as $bcc) {
+        $mail->addBCC($bcc);
+    }
+
+    if ($inReplyTo !== '') {
+        $mail->addCustomHeader('In-Reply-To', str_replace(["\r", "\n"], '', $inReplyTo));
+    }
+    if ($references !== '') {
+        $mail->addCustomHeader('References', str_replace(["\r", "\n"], '', $references));
+    }
+
+    $mail->isHTML(true);
+    $mail->Subject = $subject;
+    $mail->Body    = $htmlContent;
+    $mail->AltBody = $plainText;
+
+    foreach ($attachments as $att) {
+        $safeFilename = str_replace(['"', "\r", "\n"], '_', (string) $att['name']);
+        $mimeType     = (string) ($att['mime'] ?: 'application/octet-stream');
+        $mail->addStringAttachment(
+            (string) $att['content'],
+            $safeFilename,
+            \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64,
+            $mimeType
+        );
+    }
+
+    try {
+        $mail->send();
+        $sentMessageId = $mail->getLastMessageID();
+
+        return [
+            'id'                 => $sentMessageId !== '' ? $sentMessageId : 'smtp_' . bin2hex(random_bytes(8)),
+            'thread_id'          => '',
+            'transport'          => 'phpmailer_gmail_smtp',
+            'smtp_connected'     => true,
+            'smtp_authenticated' => true,
+            'smtp_host'          => 'smtp.gmail.com',
+            'smtp_port'          => 465,
+            'smtp_encryption'    => 'SSL (SMTPS)',
+            'smtp_auth'          => true,
+            'account_email'      => DEFAULT_OFFICIAL_GMAIL,
+            'from_email'         => DEFAULT_OFFICIAL_GMAIL,
+            'from_name'          => DEFAULT_OFFICIAL_NAME,
+            'sender'             => DEFAULT_OFFICIAL_GMAIL,
+            'reply_to'           => DEFAULT_OFFICIAL_GMAIL,
+            'message_id'         => $sentMessageId,
+            'headers_verified'   => [
+                'From'         => DEFAULT_OFFICIAL_NAME . ' <' . DEFAULT_OFFICIAL_GMAIL . '>',
+                'Sender'       => DEFAULT_OFFICIAL_GMAIL,
+                'Reply-To'     => DEFAULT_OFFICIAL_NAME . ' <' . DEFAULT_OFFICIAL_GMAIL . '>',
+                'Return-Path'  => DEFAULT_OFFICIAL_GMAIL,
+                'Message-ID'   => $sentMessageId,
+                'MIME-Version' => '1.0',
+                'Content-Type' => !empty($attachments) ? 'multipart/mixed' : 'multipart/alternative',
+            ],
+            'smtp_transcript'    => $captureDebug ? implode("\n", array_slice($debugLog, -24)) : '',
+        ];
+    } catch (\PHPMailer\PHPMailer\Exception $e) {
+        $safeError = sanitize_smtp_debug_line($mail->ErrorInfo ?: $e->getMessage(), $creds['password']);
+        app_log('error', 'PHPMailer SMTP send gagal: ' . $safeError);
+        throw new RuntimeException('Pengiriman via SMTP Gmail gagal: ' . $safeError);
+    }
+}
+
+/**
+ * Bangun dokumen email RFC 2822 menggunakan PHPMailer (untuk Gmail API OAuth & Drafts)
+ * sehingga seluruh header From, Sender, Reply-To, Message-ID, MIME-Version, dan Content-Type konsisten.
+ */
+function phpmailer_build_raw_mime(array $params): string
+{
+    if (!is_phpmailer_installed()) {
+        return '';
+    }
+
+    $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+    $mail->isSMTP();
+    $mail->Hostname = 'gmail.com';
+    $mail->XMailer  = 'Support Septian Mailer';
+    $mail->CharSet  = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
+    $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
+    $mail->DKIM_domain = '';
+    $mail->DKIM_private = '';
+    $mail->DKIM_selector = '';
+
+    $mail->setFrom(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME, true);
+    $mail->Sender = DEFAULT_OFFICIAL_GMAIL;
+    $mail->addReplyTo(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME);
+
+    foreach (($params['to'] ?? []) as $rcpt) {
+        $mail->addAddress($rcpt);
+    }
+    foreach (($params['cc'] ?? []) as $cc) {
+        $mail->addCC($cc);
+    }
+    foreach (($params['bcc'] ?? []) as $bcc) {
+        $mail->addBCC($bcc);
+    }
+
+    $inReplyTo  = trim((string) ($params['in_reply_to'] ?? ''));
+    $references = trim((string) ($params['references'] ?? ''));
+    if ($inReplyTo !== '') {
+        $mail->addCustomHeader('In-Reply-To', str_replace(["\r", "\n"], '', $inReplyTo));
+    }
+    if ($references !== '') {
+        $mail->addCustomHeader('References', str_replace(["\r", "\n"], '', $references));
+    }
+
+    $htmlContent = (string) ($params['html'] ?? '');
+    $plainText   = (string) ($params['plain'] ?? html_to_plain_text($htmlContent));
+
+    $mail->isHTML(true);
+    $mail->Subject = (string) ($params['subject'] ?? '(Tanpa Subjek)');
+    $mail->Body    = $htmlContent;
+    $mail->AltBody = $plainText;
+
+    foreach (($params['attachments'] ?? []) as $att) {
+        $safeFilename = str_replace(['"', "\r", "\n"], '_', (string) $att['name']);
+        $mimeType     = (string) ($att['mime'] ?: 'application/octet-stream');
+        $mail->addStringAttachment(
+            (string) $att['content'],
+            $safeFilename,
+            \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64,
+            $mimeType
+        );
+    }
+
+    $mail->preSend();
+    return $mail->getSentMIMEMessage();
+}
+
+/**
+ * Jalankan diagnostik lengkap koneksi & autentikasi SMTP Gmail (PHPMailer) + IMAP.
+ * Tidak pernah mengembalikan atau mencatat password.
+ */
+function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePassword = null): array
+{
+    $mode             = get_setting('mail_connection_mode', 'oauth');
+    $phpmailerReady   = is_phpmailer_installed();
+    $officialEmail    = strtolower(DEFAULT_OFFICIAL_GMAIL);
+    $emailInput       = strtolower(trim($overrideEmail ?? get_setting('gmail_app_password_email', $officialEmail)));
+    $password         = str_replace(' ', '', trim($overridePassword ?? get_setting('gmail_app_password_secret', '')));
+
+    $diag = [
+        'ok'                 => false,
+        'smtp'               => false,
+        'imap'               => false,
+        'smtp_connected'     => false,
+        'smtp_authenticated' => false,
+        'phpmailer_installed'=> $phpmailerReady,
+        'account_email'      => $officialEmail,
+        'from_email'         => $officialEmail,
+        'from_name'          => DEFAULT_OFFICIAL_NAME,
+        'transport_method'   => $mode === 'app_password'
+            ? 'PHPMailer SMTP (smtp.gmail.com:465 · SSL · SMTPAuth=true)'
+            : 'Google Gmail API (OAuth 2.0) — Fallback Diagnostik SMTP Tersedia',
+        'smtp_host'          => 'smtp.gmail.com',
+        'smtp_port'          => 465,
+        'smtp_encryption'    => 'SSL (SMTPS)',
+        'smtp_auth'          => true,
+        'smtp_error'         => '',
+        'smtp_transcript'    => '',
+        'message'            => '',
+    ];
+
+    if ($emailInput !== '' && $emailInput !== $officialEmail) {
+        $diag['smtp_error'] = 'Email akun tidak sesuai. Wajib menggunakan ' . $officialEmail . '.';
+        $diag['message']    = $diag['smtp_error'];
+        return $diag;
+    }
+
+    if (!$phpmailerReady) {
+        $diag['smtp_error'] = 'PHPMailer belum terpasang di folder vendor/. Jalankan composer install --no-dev --optimize-autoloader.';
+        $diag['message']    = $diag['smtp_error'];
+        return $diag;
+    }
+
+    if ($password === '') {
+        $diag['smtp_error'] = 'Google App Password belum diisi.';
+        $diag['message']    = $diag['smtp_error'];
+        return $diag;
+    }
+
+    $debugLines = [];
+    $smtp = new \PHPMailer\PHPMailer\SMTP();
+    $smtp->do_debug = \PHPMailer\PHPMailer\SMTP::DEBUG_CONNECTION;
+    $smtp->Debugoutput = static function (string $str, int $level) use (&$debugLines, $password): void {
+        $safe = sanitize_smtp_debug_line($str, $password);
+        if ($safe !== '') {
+            $debugLines[] = $safe;
+        }
+    };
+
+    try {
+        if (!$smtp->connect('ssl://smtp.gmail.com', 465, 20)) {
+            $lastErr = $smtp->getError();
+            throw new RuntimeException('Gagal terhubung ke ssl://smtp.gmail.com:465 — ' . ($lastErr['error'] ?? 'Koneksi ditolak'));
+        }
+        $diag['smtp_connected'] = true;
+
+        if (!$smtp->hello('septianfr.web.id')) {
+            $lastErr = $smtp->getError();
+            throw new RuntimeException('EHLO ke smtp.gmail.com gagal: ' . ($lastErr['smtp_msg'] ?? $lastErr['error'] ?? 'Unknown'));
+        }
+
+        if (!$smtp->authenticate($officialEmail, $password)) {
+            $lastErr = $smtp->getError();
+            throw new RuntimeException(
+                'Autentikasi SMTP ditolak oleh Gmail (' . ($lastErr['smtp_code'] ?? '535') . '): ' .
+                ($lastErr['smtp_msg'] ?? $lastErr['error'] ?? 'Periksa 2-Step Verification & 16 digit Google App Password.')
+            );
+        }
+
+        $diag['smtp_authenticated'] = true;
+        $diag['smtp']               = true;
+        $diag['ok']                 = true;
+        $smtp->quit();
+    } catch (Throwable $e) {
+        $diag['smtp_error'] = sanitize_smtp_debug_line($e->getMessage(), $password);
+    } finally {
+        if ($smtp->connected()) {
+            $smtp->close();
         }
     }
-    return $response;
+
+    $diag['smtp_transcript'] = implode("\n", array_slice($debugLines, -20));
+
+    $details = [];
+    if ($diag['smtp_authenticated']) {
+        $details[] = 'PHPMailer terhubung dan terautentikasi ke smtp.gmail.com:465 (SSL) sebagai ' . $officialEmail . '.';
+    } else {
+        $details[] = $diag['smtp_error'] ?: 'Koneksi SMTP Gmail gagal.';
+    }
+
+    // Cek IMAP opsional
+    if (function_exists('imap_open')) {
+        $imapHost = get_setting('gmail_imap_host', 'imap.gmail.com') ?: 'imap.gmail.com';
+        $imapPort = (int) (get_setting('gmail_imap_port', '993') ?: 993);
+        $mailbox  = sprintf('{%s:%d/imap/ssl}INBOX', $imapHost, $imapPort);
+        $imap     = @imap_open($mailbox, $officialEmail, $password, OP_READONLY, 1);
+        if ($imap) {
+            $diag['imap'] = true;
+            imap_close($imap);
+            $details[] = 'IMAP Gmail terhubung.';
+        } else {
+            $details[] = 'IMAP belum terhubung (pastikan IMAP aktif di Gmail).';
+        }
+    } else {
+        $details[] = 'Ekstensi php-imap tidak aktif di server (pengiriman PHPMailer SMTP tetap berfungsi penuh).';
+    }
+
+    $diag['message'] = implode(' ', $details);
+    return $diag;
 }
 
 /**
- * Kirim perintah SMTP dan verifikasi kode status yang diharapkan.
- */
-function smtp_command($socket, string $command, array $expectedCodes): string
-{
-    if ($command !== '') {
-        fwrite($socket, $command . "\r\n");
-    }
-    $response = smtp_read_response($socket);
-    $code = (int) substr($response, 0, 3);
-    if (!in_array($code, $expectedCodes, true)) {
-        throw new RuntimeException('Kesalahan SMTP (' . $code . '): ' . trim(redact_sensitive_text($response)));
-    }
-    return $response;
-}
-
-/**
- * Uji autentikasi SMTP (dan IMAP jika ekstensi tersedia) menggunakan Google App Password.
+ * Wrapper kompatibilitas untuk pengujian koneksi App Password.
  */
 function test_google_app_password_connection(?string $overrideEmail = null, ?string $overridePassword = null): array
 {
-    $officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
-    $email    = strtolower(trim($overrideEmail ?? get_setting('gmail_app_password_email', $officialEmail)));
-    $password = str_replace(' ', '', trim($overridePassword ?? get_setting('gmail_app_password_secret', '')));
-
-    if ($email !== $officialEmail) {
-        return ['ok' => false, 'smtp' => false, 'imap' => false, 'message' => 'Email harus menggunakan akun resmi ' . $officialEmail];
-    }
-    if ($password === '') {
-        return ['ok' => false, 'smtp' => false, 'imap' => false, 'message' => 'Google App Password masih kosong.'];
-    }
-
-    $smtpHost = get_setting('gmail_smtp_host', 'smtp.gmail.com') ?: 'smtp.gmail.com';
-    $smtpPort = (int) (get_setting('gmail_smtp_port', '465') ?: 465);
-    $smtpEnc  = strtolower(get_setting('gmail_smtp_encryption', 'ssl') ?: 'ssl');
-    $imapHost = get_setting('gmail_imap_host', 'imap.gmail.com') ?: 'imap.gmail.com';
-    $imapPort = (int) (get_setting('gmail_imap_port', '993') ?: 993);
-
-    $smtpOk = false;
-    $imapOk = false;
-    $details = [];
-
-    // 1. Tes koneksi SMTP
-    $target = ($smtpEnc === 'ssl' ? 'ssl://' : 'tcp://') . $smtpHost . ':' . $smtpPort;
-    $ctx = stream_context_create([
-        'ssl' => [
-            'verify_peer'      => true,
-            'verify_peer_name' => true,
-        ],
-    ]);
-    $socket = @stream_socket_client($target, $errno, $errstr, 15, STREAM_CLIENT_CONNECT, $ctx);
-    if (!$socket) {
-        return ['ok' => false, 'smtp' => false, 'imap' => false, 'message' => 'Gagal terhubung ke server SMTP Gmail: ' . $errstr];
-    }
-
-    try {
-        stream_set_timeout($socket, 15);
-        smtp_command($socket, '', [220]);
-        smtp_command($socket, 'EHLO septianfr.web.id', [250]);
-        if ($smtpEnc === 'tls') {
-            smtp_command($socket, 'STARTTLS', [220]);
-            if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-                throw new RuntimeException('Gagal mengaktifkan enkripsi STARTTLS.');
-            }
-            smtp_command($socket, 'EHLO septianfr.web.id', [250]);
-        }
-        smtp_command($socket, 'AUTH LOGIN', [334]);
-        smtp_command($socket, base64_encode($email), [334]);
-        smtp_command($socket, base64_encode($password), [235]);
-        smtp_command($socket, 'QUIT', [221, 250]);
-        $smtpOk = true;
-        $details[] = 'SMTP Gmail terautentikasi.';
-    } catch (Throwable $e) {
-        fclose($socket);
-        return ['ok' => false, 'smtp' => false, 'imap' => false, 'message' => 'Autentikasi SMTP ditolak. Pastikan 2-Step Verification aktif dan 16 karakter App Password benar.'];
-    }
-    fclose($socket);
-
-    // 2. Tes koneksi IMAP jika ekstensi php-imap tersedia
-    if (function_exists('imap_open')) {
-        $mailbox = sprintf('{%s:%d/imap/ssl}INBOX', $imapHost, $imapPort);
-        $imap = @imap_open($mailbox, $email, $password, OP_READONLY, 1);
-        if ($imap) {
-            $imapOk = true;
-            imap_close($imap);
-            $details[] = 'IMAP Gmail terhubung (Kotak Masuk siap dibaca).';
-        } else {
-            $details[] = 'IMAP gagal terhubung (pastikan IMAP aktif di pengaturan Gmail).';
-        }
-    } else {
-        $details[] = 'Ekstensi php-imap belum aktif di server hosting (SMTP tetap berfungsi penuh untuk mengirim email).';
-    }
-
-    return [
-        'ok'      => $smtpOk,
-        'smtp'    => $smtpOk,
-        'imap'    => $imapOk,
-        'message' => implode(' ', $details),
-    ];
-}
-
-/**
- * Kirim pesan RFC 2822 mentah melalui SMTP Gmail menggunakan Google App Password.
- */
-function smtp_send_raw_message(string $rawMime, array $recipients): array
-{
-    $creds  = app_password_credentials();
-    $target = ($creds['smtp_enc'] === 'ssl' ? 'ssl://' : 'tcp://') . $creds['smtp_host'] . ':' . $creds['smtp_port'];
-
-    $ctx = stream_context_create([
-        'ssl' => [
-            'verify_peer'      => true,
-            'verify_peer_name' => true,
-        ],
-    ]);
-
-    $socket = @stream_socket_client($target, $errno, $errstr, 20, STREAM_CLIENT_CONNECT, $ctx);
-    if (!$socket) {
-        throw new RuntimeException('Tidak dapat terhubung ke SMTP Gmail: ' . $errstr);
-    }
-
-    try {
-        stream_set_timeout($socket, 25);
-        smtp_command($socket, '', [220]);
-        smtp_command($socket, 'EHLO septianfr.web.id', [250]);
-
-        if ($creds['smtp_enc'] === 'tls') {
-            smtp_command($socket, 'STARTTLS', [220]);
-            if (!stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-                throw new RuntimeException('Gagal mengaktifkan STARTTLS ke SMTP Gmail.');
-            }
-            smtp_command($socket, 'EHLO septianfr.web.id', [250]);
-        }
-
-        smtp_command($socket, 'AUTH LOGIN', [334]);
-        smtp_command($socket, base64_encode($creds['email']), [334]);
-        smtp_command($socket, base64_encode($creds['password']), [235]);
-        smtp_command($socket, 'MAIL FROM:<' . $creds['email'] . '>', [250]);
-
-        foreach ($recipients as $rcpt) {
-            smtp_command($socket, 'RCPT TO:<' . $rcpt . '>', [250, 251]);
-        }
-
-        smtp_command($socket, 'DATA', [354]);
-        // Dot-stuffing RFC 5321
-        $stuffed = preg_replace('/^\./m', '..', str_replace(["\r\n", "\r"], "\n", $rawMime));
-        $stuffed = str_replace("\n", "\r\n", (string) $stuffed);
-        fwrite($socket, $stuffed . "\r\n.\r\n");
-        $dataResp = smtp_read_response($socket);
-        if ((int) substr($dataResp, 0, 3) !== 250) {
-            throw new RuntimeException('Server SMTP menolak pengiriman pesan.');
-        }
-
-        smtp_command($socket, 'QUIT', [221, 250]);
-        fclose($socket);
-
-        return [
-            'id'        => 'smtp_' . bin2hex(random_bytes(8)),
-            'thread_id' => '',
-            'transport' => 'app_password_smtp',
-        ];
-    } catch (Throwable $e) {
-        @fclose($socket);
-        throw $e;
-    }
+    return run_smtp_diagnostics($overrideEmail, $overridePassword);
 }
 
 /**
@@ -333,10 +536,10 @@ function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageT
         }
 
         return [
-            'messages'       => $messages,
-            'next_page_token'=> $nextPageToken,
-            'result_estimate'=> $total,
-            'transport'      => 'app_password_imap',
+            'messages'        => $messages,
+            'next_page_token' => $nextPageToken,
+            'result_estimate' => $total,
+            'transport'       => 'app_password_imap',
         ];
     } finally {
         imap_close($stream);
@@ -383,7 +586,7 @@ function imap_get_message_detail(string $compositeId): array
             };
         };
 
-        $extractParts = function ($struct, string $partNum = '') use ($stream, $uid, &$htmlBody, &$plainBody, &$attachments, $decodePart, &$extractParts): void {
+        $extractParts = function ($struct, string $partNum = '') use ($stream, $uid, $folder, &$htmlBody, &$plainBody, &$attachments, $decodePart, &$extractParts): void {
             if (!empty($struct->parts)) {
                 foreach ($struct->parts as $idx => $sub) {
                     $num = $partNum === '' ? (string) ($idx + 1) : ($partNum . '.' . ($idx + 1));
@@ -605,7 +808,6 @@ function imap_download_attachment(string $compositeId, string $section): array
         $structure = imap_fetchstructure($stream, (int) $uid, FT_UID);
         $rawData   = imap_fetchbody($stream, (int) $uid, $section, FT_UID | FT_PEEK);
 
-        // Cari encoding & nama file pada bagian terkait
         $partsIdx = explode('.', $section);
         $node = $structure;
         foreach ($partsIdx as $p) {

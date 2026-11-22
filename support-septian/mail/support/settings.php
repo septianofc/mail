@@ -18,8 +18,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         $appName         = trim((string) ($_POST['app_name'] ?? DEFAULT_APP_NAME)) ?: DEFAULT_APP_NAME;
-        $officialName    = trim((string) ($_POST['official_name'] ?? DEFAULT_OFFICIAL_NAME)) ?: DEFAULT_OFFICIAL_NAME;
-        $supportEmail    = strtolower(trim((string) ($_POST['support_email'] ?? DEFAULT_OFFICIAL_GMAIL)));
+        $officialName    = DEFAULT_OFFICIAL_NAME;
+        $supportEmail    = strtolower(DEFAULT_OFFICIAL_GMAIL);
+        $postedEmail     = strtolower(trim((string) ($_POST['support_email'] ?? DEFAULT_OFFICIAL_GMAIL)));
         $websiteUrl      = safe_http_url((string) ($_POST['website_url'] ?? DEFAULT_WEBSITE_URL), DEFAULT_WEBSITE_URL);
         $logoUrl         = safe_http_url((string) ($_POST['logo_url'] ?? DEFAULT_LOGO_URL), DEFAULT_LOGO_URL);
         $officialAddress = trim((string) ($_POST['official_address'] ?? DEFAULT_ADDRESS));
@@ -27,20 +28,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $footerNote      = trim((string) ($_POST['footer_note'] ?? ''));
         $itemsPerPage    = (string) max(10, min(50, (int) ($_POST['items_per_page'] ?? 20)));
 
-        if (!filter_var($supportEmail, FILTER_VALIDATE_EMAIL)) {
-            throw new RuntimeException('Alamat email Support Septian tidak valid.');
+        if ($postedEmail !== '' && $postedEmail !== $supportEmail) {
+            throw new RuntimeException('Email Gmail Resmi dikunci ke ' . $supportEmail . ' agar otentikasi DKIM Gmail selalu valid.');
         }
 
         $toSave = [
-            'app_name'         => $appName,
-            'official_name'    => $officialName,
-            'support_email'    => $supportEmail,
-            'website_url'      => $websiteUrl,
-            'logo_url'         => $logoUrl,
-            'official_address' => $officialAddress,
-            'email_signature'  => $emailSignature,
-            'footer_note'      => $footerNote,
-            'items_per_page'   => $itemsPerPage,
+            'app_name'                 => $appName,
+            'official_name'            => $officialName,
+            'support_email'            => $supportEmail,
+            'gmail_app_password_email' => $supportEmail,
+            'website_url'              => $websiteUrl,
+            'logo_url'                 => $logoUrl,
+            'official_address'         => $officialAddress,
+            'email_signature'          => $emailSignature,
+            'footer_note'              => $footerNote,
+            'items_per_page'           => $itemsPerPage,
         ];
 
         foreach ($toSave as $k => $v) {
@@ -66,7 +68,7 @@ require __DIR__ . '/includes/header.php';
         <p class="page-subtitle">Atur identitas resmi, logo, alamat footer, tanda tangan email, dan preferensi kotak masuk</p>
     </div>
     <div class="page-actions">
-        <a href="<?= e(base_url('gmail-connection.php')) ?>" class="btn btn-secondary">Koneksi Gmail &amp; App Password</a>
+        <a href="<?= e(base_url('gmail-connection.php')) ?>" class="btn btn-secondary">Koneksi Gmail &amp; Diagnostik SMTP</a>
     </div>
 </div>
 
@@ -82,12 +84,14 @@ require __DIR__ . '/includes/header.php';
             <input type="text" id="app_name" name="app_name" value="<?= e($settings['app_name']) ?>" required>
         </div>
         <div class="form-group">
-            <label for="official_name">Nama Identitas Resmi</label>
-            <input type="text" id="official_name" name="official_name" value="<?= e($settings['official_name']) ?>" required>
+            <label for="official_name">Nama Pengirim Resmi (From Name)</label>
+            <input type="text" id="official_name" name="official_name" value="<?= e(DEFAULT_OFFICIAL_NAME) ?>" readonly required>
+            <small class="form-hint">Dikunci resmi sebagai <strong><?= e(DEFAULT_OFFICIAL_NAME) ?></strong>.</small>
         </div>
         <div class="form-group">
-            <label for="support_email">Email Gmail Resmi</label>
-            <input type="email" id="support_email" name="support_email" value="<?= e($settings['support_email']) ?>" required>
+            <label for="support_email">Email Gmail Resmi (From &amp; SMTP Username)</label>
+            <input type="email" id="support_email" name="support_email" value="<?= e(DEFAULT_OFFICIAL_GMAIL) ?>" readonly required>
+            <small class="form-hint">Dikunci ke <code><?= e(DEFAULT_OFFICIAL_GMAIL) ?></code> agar DKIM Google lulus (<code>DKIM=PASS</code>).</small>
         </div>
         <div class="form-group">
             <label for="website_url">Website Resmi</label>

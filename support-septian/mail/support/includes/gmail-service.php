@@ -4,7 +4,7 @@
  *
  * Mengelola seluruh operasi email sungguhan (Inbox, Sent, Drafts, Starred, Spam, Trash,
  * Thread Detail, Search, Send, Reply, Reply All, Forward, Save Draft, Actions, Attachments, Stats)
- * dengan Google Gmail API (OAuth 2.0) sebagai jalur utama dan dukungan penuh Google App Password.
+ * dengan Google Gmail API (OAuth 2.0) dan PHPMailer SMTP Gmail (App Password, SSL:465).
  */
 
 declare(strict_types=1);
@@ -37,7 +37,7 @@ function gmail_base64url_decode(string $data): string
 }
 
 /**
- * Cek apakah mode aktif adalah App Password.
+ * Cek apakah mode aktif adalah App Password (PHPMailer SMTP Gmail).
  */
 function is_app_password_mode(): bool
 {
@@ -66,13 +66,20 @@ function mime_encode_header(string $value): string
 }
 
 /**
- * Bangun dokumen email RFC 2822 MIME lengkap (multipart/alternative + optional multipart/mixed attachments).
+ * Bangun dokumen email RFC 2822 MIME lengkap untuk Gmail API / Drafts.
+ * Memprioritaskan PHPMailer agar header From, Sender, Reply-To, Message-ID, MIME-Version, dan Content-Type konsisten tanpa duplikasi.
  */
 function build_rfc2822_mime(array $params): string
 {
-    $settings      = get_all_settings();
-    $officialName  = $settings['official_name'] ?: DEFAULT_OFFICIAL_NAME;
-    $supportEmail  = strtolower(trim($settings['support_email'] ?: DEFAULT_OFFICIAL_GMAIL));
+    if (is_phpmailer_installed()) {
+        $built = phpmailer_build_raw_mime($params);
+        if ($built !== '') {
+            return $built;
+        }
+    }
+
+    $officialName  = DEFAULT_OFFICIAL_NAME;
+    $supportEmail  = strtolower(DEFAULT_OFFICIAL_GMAIL);
 
     $toList        = $params['to'] ?? [];
     $ccList        = $params['cc'] ?? [];
@@ -98,9 +105,9 @@ function build_rfc2822_mime(array $params): string
     }
     $headers[] = 'Subject: ' . mime_encode_header($subject);
     $headers[] = 'Date: ' . date('r');
-    $headers[] = 'Message-ID: <ss-' . bin2hex(random_bytes(12)) . '@septianfr.web.id>';
+    $headers[] = 'Message-ID: <ss-' . bin2hex(random_bytes(12)) . '@gmail.com>';
     $headers[] = 'MIME-Version: 1.0';
-    $headers[] = 'X-Mailer: Support Septian Mail System';
+    $headers[] = 'X-Mailer: Support Septian Mailer';
 
     if ($inReplyTo !== '') {
         $headers[] = 'In-Reply-To: ' . str_replace(["\r", "\n"], '', $inReplyTo);
@@ -300,7 +307,6 @@ function mail_list_messages(string $folder = 'inbox', int $maxResults = 20, ?str
         $params['q'] = trim($searchQuery);
     }
 
-    // Jika folder drafts, kita juga bisa menyertakan draftId agar bisa dilanjutkan
     $draftMap = [];
     if (strtolower($folder) === 'drafts') {
         $draftList = $service->users_drafts->listUsersDrafts('me', array_filter([
@@ -413,7 +419,6 @@ function mail_get_thread_detail(string $messageId, bool $markAsRead = true): arr
             ? sanitize_email_html($parts['html'])
             : '<div style="white-space:pre-wrap;font-family:inherit;line-height:1.65;">' . e($parts['plain']) . '</div>';
 
-        // Tandai sudah dibaca otomatis saat dibuka
         if ($markAsRead && in_array('UNREAD', $labels, true)) {
             try {
                 $mod = new \Google\Service\Gmail\ModifyMessageRequest();
@@ -421,7 +426,6 @@ function mail_get_thread_detail(string $messageId, bool $markAsRead = true): arr
                 $service->users_messages->modify('me', $mid, $mod);
                 $labels = array_values(array_diff($labels, ['UNREAD']));
             } catch (Throwable $e) {
-                // Abaikan jika gagal menandai dibaca
             }
         }
 
@@ -457,9 +461,12 @@ function mail_get_thread_detail(string $messageId, bool $markAsRead = true): arr
 }
 
 /**
- * Kirim email sungguhan (Compose, Reply, Reply All, Forward) melalui Gmail API atau SMTP App Password.
+ * Kirim email sungguhan (Compose, Reply, Reply All, Forward) melalui:
+ * - PHPMailer SMTP Gmail terautentikasi (smtp.gmail.com:465 SSL, App Password), ATAU
+ * - Google Gmail API (OAuth 2.0)
+ * Tidak pernah memakai PHP mail(), sendmail(), atau SMTP lokal hosting.
  */
-function mail_send_email(array $payload): array
+function mail_send_email(array $payload, bool $forceSmtp = false): array
 {
     $toList  = parse_email_list((string) ($payload['to'] ?? ''));
     $ccList  = parse_email_list((string) ($payload['cc'] ?? ''));
@@ -469,7 +476,7 @@ function mail_send_email(array $payload): array
         throw new RuntimeException('Minimal satu alamat email penerima (Kepada) yang valid wajib diisi.');
     }
 
-    $subject      = trim((string) ($payload['subject'] ?? ''));
+    $subject = trim((string) ($payload['subject'] ?? ''));
     if ($subject === '') {
         throw new RuntimeException('Subjek email tidak boleh kosong.');
     }
@@ -490,27 +497,48 @@ function mail_send_email(array $payload): array
         $variables['nama_penerima'] = explode('@', $toList[0])[0];
     }
 
+    // Pertahankan seluruh template HTML resmi Support Septian (logo, footer, alamat, tanda tangan)
     $finalHtml = $wrapTemplate
         ? render_professional_email_html($bodyHtml, $subject, $variables, true, $quotedHtml)
         : sanitize_outgoing_body_html($bodyHtml);
 
+    $plainBody = html_to_plain_text($finalHtml);
+
+    // Jalur PHPMailer SMTP Gmail terautentikasi (wajib untuk mode App Password atau forceSmtp)
+    if ($forceSmtp || is_app_password_mode()) {
+        $res = phpmailer_send_email([
+            'to'          => $toList,
+            'cc'          => $ccList,
+            'bcc'         => $bccList,
+            'subject'     => $subject,
+            'html'        => $finalHtml,
+            'plain'       => $plainBody,
+            'in_reply_to' => $inReplyTo,
+            'references'  => $references,
+            'attachments' => $attachments,
+        ], !empty($payload['capture_debug']));
+
+        log_activity(
+            'email_sent',
+            'Email terkirim via PHPMailer SMTP Gmail (smtp.gmail.com:465 SSL) ke ' . implode(', ', $toList) . ' — Subjek: ' . $subject,
+            'email',
+            $res['id']
+        );
+        return $res;
+    }
+
+    // Jalur Gmail API OAuth 2.0 (jika mode OAuth aktif dan terhubung)
     $rawMime = build_rfc2822_mime([
         'to'          => $toList,
         'cc'          => $ccList,
         'bcc'         => $bccList,
         'subject'     => $subject,
         'html'        => $finalHtml,
+        'plain'       => $plainBody,
         'in_reply_to' => $inReplyTo,
         'references'  => $references,
         'attachments' => $attachments,
     ]);
-
-    if (is_app_password_mode()) {
-        $allRecipients = array_values(array_unique(array_merge($toList, $ccList, $bccList)));
-        $res = smtp_send_raw_message($rawMime, $allRecipients);
-        log_activity('email_sent', 'Email terkirim via App Password SMTP ke ' . implode(', ', $toList) . ' — Subjek: ' . $subject, 'email', $res['id']);
-        return $res;
-    }
 
     $service = get_gmail_api_service();
     $gmailMessage = new \Google\Service\Gmail\Message();
@@ -523,16 +551,71 @@ function mail_send_email(array $payload): array
 
     log_activity(
         'email_sent',
-        'Email terkirim via Gmail API ke ' . implode(', ', $toList) . ' — Subjek: ' . $subject,
+        'Email terkirim via Gmail API OAuth 2.0 ke ' . implode(', ', $toList) . ' — Subjek: ' . $subject,
         'email',
         (string) $sent->getId()
     );
 
     return [
-        'id'        => (string) $sent->getId(),
-        'thread_id' => (string) $sent->getThreadId(),
-        'transport' => 'gmail_api_oauth',
+        'id'                 => (string) $sent->getId(),
+        'thread_id'          => (string) $sent->getThreadId(),
+        'transport'          => 'gmail_api_oauth',
+        'smtp_connected'     => true,
+        'smtp_authenticated' => true,
+        'account_email'      => DEFAULT_OFFICIAL_GMAIL,
+        'from_email'         => DEFAULT_OFFICIAL_GMAIL,
+        'from_name'          => DEFAULT_OFFICIAL_NAME,
     ];
+}
+
+/**
+ * Kirim satu email percobaan diagnostik ke alamat email admin lain (tidak pernah mengulang otomatis).
+ */
+function send_diagnostic_test_email(string $recipientEmail, string $adminName = DEFAULT_OFFICIAL_NAME): array
+{
+    $recipientEmail = strtolower(trim($recipientEmail));
+    if (!filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
+        throw new RuntimeException('Alamat email tujuan tes tidak valid.');
+    }
+
+    $appPassSet = trim(get_setting('gmail_app_password_secret', '')) !== '';
+    $oauthToken = get_stored_oauth_token();
+    $useSmtp    = is_app_password_mode() || $appPassSet || !$oauthToken || $oauthToken['status'] !== 'connected';
+
+    $subject = 'Uji Pengiriman & Verifikasi DKIM Support Septian (' . date('d M Y H:i') . ' WIB)';
+    $bodyHtml = '<p>Halo <strong>{nama_penerima}</strong>,</p>'
+        . '<p>Ini adalah <strong>email uji pengiriman diagnostik</strong> dari aplikasi <strong>Support Septian F. R.</strong>.</p>'
+        . '<p>Pengiriman ini dijalankan melalui koneksi terautentikasi untuk memverifikasi keaslian pengirim, header MIME, serta kelulusan tanda tangan DKIM Google (<code>DKIM=PASS</code>).</p>'
+        . '<ul>'
+        . '<li><strong>Akun Pengirim Resmi:</strong> ' . e(DEFAULT_OFFICIAL_GMAIL) . '</li>'
+        . '<li><strong>Nama Pengirim:</strong> ' . e(DEFAULT_OFFICIAL_NAME) . '</li>'
+        . '<li><strong>Metode Pengiriman:</strong> ' . ($useSmtp ? 'PHPMailer SMTP (smtp.gmail.com:465 SSL)' : 'Google Gmail API (OAuth 2.0)') . '</li>'
+        . '<li><strong>Waktu Uji:</strong> ' . e(format_tanggal_id(date('Y-m-d H:i:s'), true)) . '</li>'
+        . '</ul>'
+        . '<p>Silakan buka menu <strong>Lainnya (&vellip;) &rarr; Tampilkan Asli (Show Original)</strong> pada email ini di Gmail untuk memastikan <code>DKIM: PASS</code>.</p>';
+
+    $result = mail_send_email([
+        'to'            => $recipientEmail,
+        'subject'       => $subject,
+        'body_html'     => $bodyHtml,
+        'wrap_template' => true,
+        'capture_debug' => true,
+        'variables'     => [
+            'nama_penerima'  => explode('@', $recipientEmail)[0],
+            'email_penerima' => $recipientEmail,
+            'nama_pengirim'  => $adminName ?: DEFAULT_OFFICIAL_NAME,
+            'subjek'         => $subject,
+        ],
+    ], $useSmtp);
+
+    log_activity(
+        'diagnostic_test_send',
+        'Satu email tes diagnostik dikirim ke ' . $recipientEmail . ' via ' . ($result['transport'] ?? 'smtp'),
+        'diagnostics',
+        $result['id'] ?? null
+    );
+
+    return $result;
 }
 
 /**

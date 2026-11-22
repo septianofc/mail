@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — API: Test Google App Password (SMTP + IMAP) Connection
+ * Support Septian — API: Diagnostik & Tes Koneksi PHPMailer SMTP Gmail + IMAP
  * POST /mail/support/api/test-app-password.php
  */
 
@@ -22,11 +22,11 @@ try {
     $email    = isset($data['email']) && trim((string) $data['email']) !== '' ? trim((string) $data['email']) : null;
     $password = isset($data['app_password']) && trim((string) $data['app_password']) !== '' ? trim((string) $data['app_password']) : null;
 
-    $result = test_google_app_password_connection($email, $password);
+    $result = run_smtp_diagnostics($email, $password);
 
     log_activity(
         'test_app_password',
-        'Pengujian koneksi Google App Password: ' . ($result['ok'] ? 'Berhasil' : 'Gagal'),
+        'Diagnostik koneksi PHPMailer SMTP Gmail: ' . ($result['ok'] ? 'Berhasil' : 'Gagal'),
         'settings',
         null,
         $result['ok'] ? 'success' : 'warning',
@@ -35,5 +35,15 @@ try {
 
     json_response($result, $result['ok'] ? 200 : 400);
 } catch (Throwable $e) {
-    json_response(['ok' => false, 'message' => $e->getMessage()], 400);
+    json_response([
+        'ok'                 => false,
+        'smtp_connected'     => false,
+        'smtp_authenticated' => false,
+        'account_email'      => DEFAULT_OFFICIAL_GMAIL,
+        'from_email'         => DEFAULT_OFFICIAL_GMAIL,
+        'from_name'          => DEFAULT_OFFICIAL_NAME,
+        'transport_method'   => 'PHPMailer SMTP (smtp.gmail.com:465 · SSL · SMTPAuth=true)',
+        'smtp_error'         => redact_sensitive_text($e->getMessage()),
+        'message'            => redact_sensitive_text($e->getMessage()),
+    ], 400);
 }

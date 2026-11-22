@@ -718,12 +718,16 @@ export default function App() {
               </div>
 
               <div className="pt-2">
-                <h3 className="text-sm font-bold text-slate-900 mb-2">2. Alternatif Google App Password (SMTP + IMAP)</h3>
+                <h3 className="text-sm font-bold text-slate-900 mb-2">
+                  2. Alternatif Google App Password (PHPMailer SMTP SSL:465 + IMAP)
+                </h3>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Sudah tersedia di <code>install.php</code> dan <code>gmail-connection.php</code>. Aktifkan{' '}
-                  <strong>2-Step Verification</strong> pada <code>support.septianfr@gmail.com</code>, buat 16-digit{' '}
-                  <strong>App Password</strong>, masukkan pada panel <strong>Google App Password</strong> (disimpan terenkripsi
-                  AES-256-GCM), lalu tekan tombol <strong>Uji Koneksi SMTP &amp; IMAP</strong>.
+                  Tersedia di <code>install.php</code> dan <code>gmail-connection.php</code> dengan{' '}
+                  <strong>PHPMailer</strong> ke <code>smtp.gmail.com:465</code> (SSL, <code>SMTPAuth=true</code>) dan
+                  pengirim resmi terkunci ke <code>Support Septian F. R. &lt;support.septianfr@gmail.com&gt;</code> agar DKIM
+                  Google valid (<code>DKIM=PASS</code>). Aktifkan <strong>2-Step Verification</strong>, buat 16-digit{' '}
+                  <strong>App Password</strong>, simpan, jalankan <strong>Diagnostik SMTP</strong>, lalu uji dengan tombol{' '}
+                  <strong>Kirim 1 Email Tes</strong>.
                 </p>
               </div>
             </section>
@@ -741,7 +745,7 @@ export default function App() {
                   <code>support-septian/</code>.
                 </li>
                 <li>
-                  <strong>Instal Google API PHP Client:</strong> Jalankan perintah berikut di root folder{' '}
+                  <strong>Instal Google API PHP Client &amp; PHPMailer:</strong> Jalankan perintah berikut di root folder{' '}
                   <code>support-septian/</code> agar folder <code>mail/support/vendor/</code> terbentuk:
                   <div className="mt-1.5 flex items-center justify-between gap-2 bg-slate-950 text-slate-100 rounded-lg px-3 py-2 font-mono text-xs">
                     <span>composer install --no-dev --optimize-autoloader</span>

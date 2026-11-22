@@ -14,18 +14,18 @@ Panduan langkah demi langkah untuk memasang **Support Septian** pada URL produks
 
 ---
 
-## Langkah 1 — Siapkan Folder `vendor/` (Google API PHP Client)
+## Langkah 1 — Siapkan Folder `vendor/` (Google API PHP Client & PHPMailer)
 
 Jika hosting **mendukung SSH / Terminal**:
 ```bash
 cd ~/public_html/mail/support
-composer require google/apiclient:^2.18
+composer require google/apiclient:^2.18 phpmailer/phpmailer:^6.9
 ```
 Atau jalankan di komputer lokal Anda pada folder `support-septian/`:
 ```bash
 composer install --no-dev --optimize-autoloader
 ```
-Folder `mail/support/vendor/` akan terbentuk (ukuran ringan karena `composer.json` sudah mengaktifkan `Google\Task\Composer::cleanup` khusus `Gmail` & `Oauth2`). Kompres `vendor/` menjadi ZIP dan ekstrak di `public_html/mail/support/vendor/`.
+Folder `mail/support/vendor/` akan terbentuk berisi `google/apiclient` dan `phpmailer/phpmailer` (ukuran ringan karena `composer.json` sudah mengaktifkan `Google\Task\Composer::cleanup` khusus `Gmail` & `Oauth2`). Kompres `vendor/` menjadi ZIP dan ekstrak di `public_html/mail/support/vendor/`.
 
 ---
 
@@ -108,6 +108,7 @@ Pastikan `database.sql` berada di `public_html/mail/support/database.sql` saat m
 3. **Verifikasi Proteksi `.htaccess`**:
    - Buka `https://septianfr.web.id/mail/support/includes/config.php` &rarr; harus mengembalikan **403 Forbidden**.
    - Buka `https://septianfr.web.id/mail/support/storage/tokens/` &rarr; harus mengembalikan **403 Forbidden**.
-4. **Hubungkan Gmail**:
+4. **Hubungkan Gmail & Verifikasi DKIM**:
    - Login ke `https://septianfr.web.id/mail/support/login.php`.
-   - Buka menu **Koneksi Gmail**, hubungkan akun `support.septianfr@gmail.com` via OAuth 2.0 atau uji koneksi Google App Password.
+   - Buka menu **Koneksi Gmail**, hubungkan akun `support.septianfr@gmail.com` via OAuth 2.0 atau masukkan Google App Password 16 digit (PHPMailer `smtp.gmail.com:465` SSL, `SMTPAuth=true`).
+   - Klik **Jalankan Diagnostik SMTP**, lalu kirim **1 Email Tes** ke alamat Gmail lain milik admin dan pastikan di Gmail penerima menu **Show Original** menunjukkan **`DKIM: PASS`**.
