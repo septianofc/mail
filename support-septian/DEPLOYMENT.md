@@ -14,18 +14,25 @@ Panduan langkah demi langkah untuk memasang **Support Septian** pada URL produks
 
 ---
 
-## Langkah 1 — Siapkan Folder `vendor/` (Google API PHP Client & PHPMailer)
+## Langkah 1 — Siapkan Library (`vendor/` atau Pemasangan Manual PHPMailer)
 
-Jika hosting **mendukung SSH / Terminal**:
+### Opsi A — Menggunakan Composer (SSH / Komputer Lokal)
 ```bash
 cd ~/public_html/mail/support
 composer require google/apiclient:^2.18 phpmailer/phpmailer:^6.9
 ```
-Atau jalankan di komputer lokal Anda pada folder `support-septian/`:
+Atau jalankan di folder `support-septian/` lokal Anda:
 ```bash
 composer install --no-dev --optimize-autoloader
 ```
-Folder `mail/support/vendor/` akan terbentuk berisi `google/apiclient` dan `phpmailer/phpmailer` (ukuran ringan karena `composer.json` sudah mengaktifkan `Google\Task\Composer::cleanup` khusus `Gmail` & `Oauth2`). Kompres `vendor/` menjadi ZIP dan ekstrak di `public_html/mail/support/vendor/`.
+Folder `mail/support/vendor/` akan terbentuk berisi `google/apiclient` dan `phpmailer/phpmailer`.
+
+### Opsi B — Memasang PHPMailer Secara Manual (Tanpa Composer / cPanel File Manager)
+1. Unduh rilis resmi PHPMailer dari GitHub (`https://github.com/PHPMailer/PHPMailer/releases`).
+2. Ekstrak arsip tersebut dan salin folder **`src/`** (berisi `Exception.php`, `PHPMailer.php`, dan `SMTP.php`) ke salah satu lokasi berikut:
+   - `public_html/mail/support/includes/phpmailer/src/` *(Direkomendasikan — otomatis terlindungi `.htaccess`)*
+   - `public_html/mail/support/vendor/phpmailer/phpmailer/src/`
+3. `includes/config.php` akan otomatis mendeteksi dan memuat PHPMailer secara langsung tanpa memerlukan `vendor/autoload.php`.
 
 ---
 

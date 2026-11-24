@@ -53,7 +53,7 @@ $checks = [
     'Ekstensi DOM & Fileinfo'              => extension_loaded('dom') && extension_loaded('fileinfo'),
     'Folder storage/ dapat ditulis'        => is_dir(STORAGE_PATH) && is_writable(STORAGE_PATH),
     'Google API PHP Client (vendor/)'      => class_exists(\Google\Client::class),
-    'PHPMailer SMTP (vendor/)'             => class_exists(\PHPMailer\PHPMailer\PHPMailer::class),
+    'PHPMailer SMTP (Composer / Manual)'   => class_exists(\PHPMailer\PHPMailer\PHPMailer::class),
     'Ekstensi PHP IMAP (opsional App Pass)'=> extension_loaded('imap'),
 ];
 

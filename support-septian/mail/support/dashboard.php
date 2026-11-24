@@ -16,16 +16,26 @@ $settings     = get_all_settings();
 $connStatus   = get_mail_connection_status();
 
 // Ambil aktivitas terbaru dari database lokal
-$recentLogs = db()->query(
-    'SELECT a.action, a.description, a.status, a.created_at, ad.name AS admin_name
-     FROM activity_logs a
-     LEFT JOIN admins ad ON ad.id = a.admin_id
-     ORDER BY a.id DESC
-     LIMIT 8'
-)->fetchAll();
+$recentLogs = [];
+try {
+    $recentLogs = db()->query(
+        'SELECT a.action, a.description, a.status, a.created_at, ad.name AS admin_name
+         FROM activity_logs a
+         LEFT JOIN admins ad ON ad.id = a.admin_id
+         ORDER BY a.id DESC
+         LIMIT 8'
+    )->fetchAll();
+} catch (Throwable $e) {
+    app_log('warning', 'dashboard.php gagal memuat activity_logs: ' . $e->getMessage());
+}
 
 // Hitung jumlah template aktif
-$tplCount = (int) db()->query('SELECT COUNT(*) FROM email_templates WHERE is_active = 1')->fetchColumn();
+$tplCount = 0;
+try {
+    $tplCount = (int) db()->query('SELECT COUNT(*) FROM email_templates WHERE is_active = 1')->fetchColumn();
+} catch (Throwable $e) {
+    app_log('warning', 'dashboard.php gagal menghitung email_templates: ' . $e->getMessage());
+}
 
 $extraScripts = ['inbox.js'];
 require __DIR__ . '/includes/header.php';
@@ -151,14 +161,15 @@ require __DIR__ . '/includes/header.php';
         <?php else: ?>
             <ul class="activity-list">
                 <?php foreach ($recentLogs as $log): ?>
+                    <?php $logStatus = (string) ($log['status'] ?? 'success'); ?>
                     <li class="activity-item">
                         <div class="activity-main">
-                            <span class="activity-desc"><?= e($log['description']) ?></span>
+                            <span class="activity-desc"><?= e((string) ($log['description'] ?? '')) ?></span>
                             <span class="activity-meta">
-                                <?= e($log['admin_name'] ?: 'Sistem') ?> &middot; <?= e(format_tanggal_id($log['created_at'])) ?>
+                                <?= e((string) ($log['admin_name'] ?: 'Sistem')) ?> &middot; <?= e(format_tanggal_id($log['created_at'] ?? null)) ?>
                             </span>
                         </div>
-                        <span class="status-text status-<?= e($log['status']) ?>"><?= e(ucfirst($log['status'])) ?></span>
+                        <span class="status-text status-<?= e($logStatus) ?>"><?= e(ucfirst($logStatus)) ?></span>
                     </li>
                 <?php endforeach; ?>
             </ul>

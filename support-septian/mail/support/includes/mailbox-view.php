@@ -10,11 +10,21 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === basename(__FILE__)) {
     exit('Akses langsung tidak diizinkan.');
 }
 
+require_once __DIR__ . '/gmail-client.php';
+
 $folderKey      = $folderKey ?? 'inbox';
 $folderTitle    = $folderTitle ?? 'Kotak Masuk';
 $folderSubtitle = $folderSubtitle ?? 'Pesan masuk akun support.septianfr@gmail.com';
 $searchQuery    = trim((string) ($_GET['q'] ?? ''));
-$connStatus     = get_mail_connection_status();
+try {
+    $connStatus = get_mail_connection_status();
+} catch (Throwable $e) {
+    app_log('error', 'Mailbox view connection status error: ' . $e->getMessage());
+    $connStatus = [
+        'active_ready' => false,
+        'notice'       => 'Gagal memuat status koneksi Gmail. Periksa konfigurasi di halaman Koneksi Gmail.',
+    ];
+}
 $extraScripts   = ['inbox.js'];
 
 require __DIR__ . '/header.php';

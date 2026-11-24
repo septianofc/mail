@@ -210,15 +210,20 @@ function get_default_template_by_category(string $category): ?array
         $category = 'reply';
     }
 
-    $stmt = db()->prepare(
-        'SELECT * FROM email_templates
-         WHERE category = :cat AND is_active = 1
-         ORDER BY is_default DESC, id ASC
-         LIMIT 1'
-    );
-    $stmt->execute([':cat' => $category]);
-    $row = $stmt->fetch();
-    return $row ?: null;
+    try {
+        $stmt = db()->prepare(
+            'SELECT * FROM email_templates
+             WHERE category = :cat AND is_active = 1
+             ORDER BY is_default DESC, id ASC
+             LIMIT 1'
+        );
+        $stmt->execute([':cat' => $category]);
+        $row = $stmt->fetch();
+        return $row ?: null;
+    } catch (Throwable $e) {
+        app_log('error', 'get_default_template_by_category error: ' . $e->getMessage());
+        return null;
+    }
 }
 
 /**
@@ -226,15 +231,20 @@ function get_default_template_by_category(string $category): ?array
  */
 function get_templates(?string $category = null): array
 {
-    if ($category !== null && $category !== '' && $category !== 'all') {
-        $stmt = db()->prepare(
-            'SELECT * FROM email_templates WHERE category = :cat ORDER BY is_default DESC, name ASC'
-        );
-        $stmt->execute([':cat' => $category]);
-        return $stmt->fetchAll();
-    }
+    try {
+        if ($category !== null && $category !== '' && $category !== 'all') {
+            $stmt = db()->prepare(
+                'SELECT * FROM email_templates WHERE category = :cat ORDER BY is_default DESC, name ASC'
+            );
+            $stmt->execute([':cat' => $category]);
+            return $stmt->fetchAll();
+        }
 
-    return db()->query('SELECT * FROM email_templates ORDER BY category ASC, is_default DESC, name ASC')->fetchAll();
+        return db()->query('SELECT * FROM email_templates ORDER BY category ASC, is_default DESC, name ASC')->fetchAll();
+    } catch (Throwable $e) {
+        app_log('error', 'get_templates error: ' . $e->getMessage());
+        return [];
+    }
 }
 
 /**
@@ -267,6 +277,16 @@ function sanitize_email_html(string $html): string
         'href', 'src', 'alt', 'title', 'style', 'width', 'height',
         'align', 'valign', 'cellpadding', 'cellspacing', 'border', 'colspan', 'rowspan', 'target', 'rel',
     ];
+
+    // Fallback aman apabila ekstensi php-xml / DOMDocument tidak aktif di server hosting
+    if (!class_exists('DOMDocument')) {
+        $clean = (string) preg_replace('#<(script|style|iframe|object|embed|form|svg|math)[^>]*>.*?</\1>#is', '', $html);
+        $allowStr = '<' . implode('><', $allowedTags) . '>';
+        $clean = strip_tags($clean, $allowStr);
+        $clean = (string) preg_replace('/\son[a-z]+\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $clean);
+        $clean = (string) preg_replace('/(href|src)\s*=\s*(["\'])\s*(?:javascript|vbscript|data:text\/html):[^"\']*\2/i', '$1="#"', $clean);
+        return $clean;
+    }
 
     $prevErrors = libxml_use_internal_errors(true);
     $dom = new DOMDocument('1.0', 'UTF-8');

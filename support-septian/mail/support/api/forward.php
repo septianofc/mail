@@ -46,7 +46,7 @@ try {
         'variables'     => [
             'nama_penerima' => $recipientName !== '' ? $recipientName : 'Rekan',
             'nama_pengirim' => $admin['name'] ?: DEFAULT_OFFICIAL_NAME,
-            'subjek'        => preg_replace('/^fwd:\s*/i', '', $subject),
+            'subjek'        => (string) (preg_replace('/^fwd:\s*/i', '', $subject) ?? $subject),
         ],
     ]);
 

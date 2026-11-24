@@ -23,6 +23,13 @@ function e(?string $value): string
  */
 function redact_sensitive_text(string $text): string
 {
+    if (function_exists('app_config')) {
+        foreach ([(string) app_config('db.pass', ''), (string) app_config('encryption_key', '')] as $secretVal) {
+            if ($secretVal !== '' && strlen($secretVal) >= 4) {
+                $text = str_replace($secretVal, '[REDACTED]', $text);
+            }
+        }
+    }
     $patterns = [
         '/(ya29\.[A-Za-z0-9\-_]+)/i',
         '/(1\/\/[A-Za-z0-9\-_]+)/i',
@@ -30,6 +37,17 @@ function redact_sensitive_text(string $text): string
         '/(password|secret|access_token|refresh_token|authorization)\s*[:=]\s*[^\s,;]+/i',
     ];
     return (string) preg_replace($patterns, '[REDACTED]', $text);
+}
+
+/**
+ * Potong string secara aman tanpa bergantung penuh pada ekstensi ext-mbstring.
+ */
+function safe_substr(string $text, int $start, ?int $length = null): string
+{
+    if (function_exists('mb_substr')) {
+        return $length === null ? mb_substr($text, $start, null, 'UTF-8') : mb_substr($text, $start, $length, 'UTF-8');
+    }
+    return $length === null ? substr($text, $start) : substr($text, $start, $length);
 }
 
 /**
@@ -67,7 +85,7 @@ function app_log(string $level, string $message, array $context = []): void
 /**
  * Kirim respons JSON konsisten dari endpoint /api/*.
  */
-function json_response(array $payload, int $statusCode = 200): never
+function json_response(array $payload, int $statusCode = 200): void
 {
     http_response_code($statusCode);
     header('Content-Type: application/json; charset=utf-8');
@@ -110,7 +128,7 @@ function pull_flashes(): array
 /**
  * Redirect aman dalam aplikasi.
  */
-function redirect_to(string $relativePath): never
+function redirect_to(string $relativePath): void
 {
     header('Location: ' . base_url($relativePath));
     exit;
@@ -271,7 +289,26 @@ function validate_uploaded_attachments(array $filesInput): array
     $sizes    = is_array($filesInput['size']) ? $filesInput['size'] : [$filesInput['size']];
 
     $totalSize = 0;
-    $finfo     = new finfo(FILEINFO_MIME_TYPE);
+    $finfo     = class_exists('finfo') ? new finfo(FILEINFO_MIME_TYPE) : null;
+    $extMimeFallback = [
+        'pdf'  => 'application/pdf',
+        'doc'  => 'application/msword',
+        'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls'  => 'application/vnd.ms-excel',
+        'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'ppt'  => 'application/vnd.ms-powerpoint',
+        'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'txt'  => 'text/plain',
+        'csv'  => 'text/csv',
+        'jpg'  => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'png'  => 'image/png',
+        'gif'  => 'image/gif',
+        'webp' => 'image/webp',
+        'zip'  => 'application/zip',
+        'rar'  => 'application/x-rar',
+        '7z'   => 'application/x-7z-compressed',
+    ];
 
     foreach ($names as $i => $rawName) {
         $err = (int) ($errors[$i] ?? UPLOAD_ERR_NO_FILE);
@@ -303,7 +340,13 @@ function validate_uploaded_attachments(array $filesInput): array
             throw new RuntimeException('Ekstensi file tidak diizinkan demi keamanan: .' . $ext);
         }
 
-        $detectedMime = (string) $finfo->file($tmp);
+        if ($finfo !== null) {
+            $detectedMime = (string) ($finfo->file($tmp) ?: 'application/octet-stream');
+        } elseif (function_exists('mime_content_type')) {
+            $detectedMime = (string) (@mime_content_type($tmp) ?: ($extMimeFallback[$ext] ?? 'application/octet-stream'));
+        } else {
+            $detectedMime = $extMimeFallback[$ext] ?? 'application/octet-stream';
+        }
         $mimeAllowed  = false;
         foreach ($allowedMimePrefixes as $prefix) {
             if (str_starts_with($detectedMime, $prefix)) {
@@ -357,4 +400,66 @@ function slugify(string $text): string
     $slug = (string) preg_replace('/[^a-z0-9]+/', '-', $slug);
     $slug = trim($slug, '-');
     return $slug !== '' ? $slug : 'template-' . time();
+}
+
+/**
+ * Baca baris terbaru dari file log error server & aplikasi secara aman (terredaksi).
+ */
+function read_recent_error_logs(int $maxLines = 80): array
+{
+    $result = [];
+    if (!defined('LOGS_PATH') || !is_dir(LOGS_PATH)) {
+        return $result;
+    }
+
+    $candidates = [];
+    $phpErr = LOGS_PATH . '/php-error.log';
+    if (is_file($phpErr) && is_readable($phpErr)) {
+        $candidates[] = $phpErr;
+    }
+
+    $appLogs = glob(LOGS_PATH . '/app-*.log') ?: [];
+    rsort($appLogs);
+    foreach (array_slice($appLogs, 0, 2) as $f) {
+        if (is_file($f) && is_readable($f)) {
+            $candidates[] = $f;
+        }
+    }
+
+    foreach ($candidates as $file) {
+        $lines = @file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!is_array($lines) || empty($lines)) {
+            continue;
+        }
+        $tail = array_slice($lines, -$maxLines);
+        $sanitized = array_map(static fn(string $ln): string => redact_sensitive_text($ln), $tail);
+        $result[] = [
+            'file'       => basename($file),
+            'updated_at' => date('Y-m-d H:i:s', (int) @filemtime($file)),
+            'size'       => (int) @filesize($file),
+            'lines'      => array_reverse($sanitized),
+        ];
+    }
+
+    return $result;
+}
+
+/**
+ * Bersihkan seluruh file log (.log) di dalam storage/logs/.
+ */
+function clear_error_logs(): int
+{
+    if (!defined('LOGS_PATH') || !is_dir(LOGS_PATH)) {
+        return 0;
+    }
+    $files = glob(LOGS_PATH . '/*.log') ?: [];
+    $cleared = 0;
+    foreach ($files as $f) {
+        if (is_file($f) && is_writable($f)) {
+            if (@file_put_contents($f, '', LOCK_EX) !== false) {
+                $cleared++;
+            }
+        }
+    }
+    return $cleared;
 }

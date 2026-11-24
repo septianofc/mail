@@ -7,6 +7,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/gmail-client.php';
 require_once __DIR__ . '/includes/email-renderer.php';
 
 $currentAdmin = require_admin();
@@ -66,17 +67,17 @@ require __DIR__ . '/includes/header.php';
                     <div class="template-row" data-tpl-id="<?= (int) $tpl['id'] ?>">
                         <div class="template-row-main">
                             <div class="template-row-title">
-                                <strong><?= e($tpl['name']) ?></strong>
-                                <?php if ((int) $tpl['is_default'] === 1): ?>
+                                <strong><?= e((string) ($tpl['name'] ?? '')) ?></strong>
+                                <?php if ((int) ($tpl['is_default'] ?? 0) === 1): ?>
                                     <span class="default-marker">Default</span>
                                 <?php endif; ?>
                             </div>
                             <div class="template-row-meta">
-                                <?= e($categoryLabels[$tpl['category']] ?? $tpl['category']) ?>
-                                &middot; Subjek: <?= e($tpl['subject_template'] ?: '-') ?>
+                                <?= e($categoryLabels[(string) ($tpl['category'] ?? '')] ?? (string) ($tpl['category'] ?? '-')) ?>
+                                &middot; Subjek: <?= e((string) ($tpl['subject_template'] ?: '-')) ?>
                             </div>
                             <?php if (!empty($tpl['description'])): ?>
-                                <div class="template-row-desc"><?= e($tpl['description']) ?></div>
+                                <div class="template-row-desc"><?= e((string) $tpl['description']) ?></div>
                             <?php endif; ?>
                         </div>
                         <div class="template-row-actions">

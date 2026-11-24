@@ -10,14 +10,30 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === basename(__FILE__)) {
     exit('Akses langsung tidak diizinkan.');
 }
 
+require_once __DIR__ . '/gmail-client.php';
+
 $pageTitle    = $pageTitle ?? 'Support Septian';
 $activePage   = $activePage ?? 'dashboard';
 $currentAdmin = $currentAdmin ?? current_admin();
 $settings     = get_all_settings();
-$connStatus   = get_mail_connection_status();
+try {
+    $connStatus = get_mail_connection_status();
+} catch (Throwable $e) {
+    app_log('error', 'Header get_mail_connection_status error: ' . $e->getMessage());
+    $connStatus = [
+        'mode'             => 'oauth',
+        'official_email'   => DEFAULT_OFFICIAL_GMAIL,
+        'active_ready'     => false,
+        'active_label'     => 'Status Koneksi Tidak Tersedia',
+        'active_badge'     => 'warning',
+        'notice'           => 'Gagal memeriksa status koneksi Gmail. Periksa log error di Keamanan Admin.',
+        'oauth_revoked'    => false,
+        'oauth_last_error' => null,
+    ];
+}
 $flashes      = pull_flashes();
 $searchValue  = trim((string) ($_GET['q'] ?? ''));
-$logoUrl      = safe_http_url($settings['logo_url'] ?: DEFAULT_LOGO_URL, base_url('assets/images/logo.png'));
+$logoUrl      = safe_http_url((string) ($settings['logo_url'] ?: DEFAULT_LOGO_URL), base_url('assets/images/logo.png'));
 $localLogoUrl = base_url('assets/images/logo.png');
 ?>
 <!DOCTYPE html>
@@ -63,8 +79,8 @@ $localLogoUrl = base_url('assets/images/logo.png');
                 <span class="conn-text"><?= e($connStatus['active_ready'] ? ($connStatus['mode'] === 'app_password' ? 'App Password Aktif' : 'Gmail API Terhubung') : 'Perlu Koneksi') ?></span>
             </a>
             <a href="<?= e(base_url('profile.php')) ?>" class="admin-chip" title="Profil Admin">
-                <span class="admin-avatar"><?= e(strtoupper(mb_substr((string) ($currentAdmin['name'] ?? 'A'), 0, 1))) ?></span>
-                <span class="admin-chip-name"><?= e($currentAdmin['name'] ?? 'Admin') ?></span>
+                <span class="admin-avatar"><?= e(strtoupper(safe_substr((string) ($currentAdmin['name'] ?? 'A'), 0, 1))) ?></span>
+                <span class="admin-chip-name"><?= e((string) ($currentAdmin['name'] ?? 'Admin')) ?></span>
             </a>
         </div>
     </header>

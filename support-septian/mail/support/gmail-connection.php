@@ -198,7 +198,7 @@ require __DIR__ . '/includes/header.php';
         <div class="spec-box">
             <div class="spec-row">
                 <span class="spec-label">Library PHPMailer</span>
-                <span class="spec-val"><?= $connStatus['phpmailer_installed'] ? '<strong class="text-success">Terpasang (Composer vendor/)</strong>' : '<strong class="text-danger">Belum terpasang (jalankan composer install)</strong>' ?></span>
+                <span class="spec-val"><?= $connStatus['phpmailer_installed'] ? '<strong class="text-success">Terpasang &amp; Siap Digunakan</strong>' : '<strong class="text-danger">Belum terpasang (unggah manual ke includes/phpmailer/src/ atau Composer vendor/)</strong>' ?></span>
             </div>
             <div class="spec-row">
                 <span class="spec-label">Status App Password</span>

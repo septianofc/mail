@@ -7,6 +7,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/gmail-client.php';
 
 $currentAdmin = require_admin();
 $pageTitle    = 'Profil Admin';
@@ -66,19 +67,19 @@ require __DIR__ . '/includes/header.php';
             <?= csrf_field() ?>
             <div class="form-group">
                 <label for="name">Nama Lengkap (digunakan pada variabel {nama_pengirim})</label>
-                <input type="text" id="name" name="name" value="<?= e($currentAdmin['name']) ?>" required>
+                <input type="text" id="name" name="name" value="<?= e((string) ($currentAdmin['name'] ?? '')) ?>" required>
             </div>
             <div class="form-group">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" value="<?= e($currentAdmin['username']) ?>" required>
+                <input type="text" id="username" name="username" value="<?= e((string) ($currentAdmin['username'] ?? '')) ?>" required>
             </div>
             <div class="form-group">
                 <label for="email">Email Admin</label>
-                <input type="email" id="email" name="email" value="<?= e($currentAdmin['email']) ?>" required>
+                <input type="email" id="email" name="email" value="<?= e((string) ($currentAdmin['email'] ?? '')) ?>" required>
             </div>
             <div class="form-group">
                 <label for="job_title">Jabatan / Peran</label>
-                <input type="text" id="job_title" name="job_title" value="<?= e($currentAdmin['job_title']) ?>">
+                <input type="text" id="job_title" name="job_title" value="<?= e((string) ($currentAdmin['job_title'] ?? '')) ?>">
             </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Simpan Profil</button>

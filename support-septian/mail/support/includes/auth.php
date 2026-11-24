@@ -36,12 +36,17 @@ function current_admin(bool $refresh = false): ?array
         return $admin;
     }
 
-    $stmt = db()->prepare(
-        'SELECT id, name, email, username, role, job_title, avatar_url, is_active, last_login_at, last_login_ip, created_at
-         FROM admins WHERE id = :id AND is_active = 1 LIMIT 1'
-    );
-    $stmt->execute([':id' => $_SESSION['admin_id']]);
-    $row = $stmt->fetch();
+    try {
+        $stmt = db()->prepare(
+            'SELECT id, name, email, username, role, job_title, avatar_url, is_active, last_login_at, last_login_ip, created_at
+             FROM admins WHERE id = :id AND is_active = 1 LIMIT 1'
+        );
+        $stmt->execute([':id' => $_SESSION['admin_id']]);
+        $row = $stmt->fetch();
+    } catch (Throwable $e) {
+        app_log('error', 'current_admin DB error: ' . $e->getMessage());
+        return null;
+    }
 
     if (!$row) {
         logout_admin();
@@ -92,31 +97,36 @@ function require_admin(bool $jsonResponse = false): array
  */
 function check_login_rate_limit(string $identifier): array
 {
-    $ip     = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
-    $cutoff = date('Y-m-d H:i:s', time() - (LOGIN_LOCKOUT_MINUTES * 60));
+    try {
+        $ip     = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+        $cutoff = date('Y-m-d H:i:s', time() - (LOGIN_LOCKOUT_MINUTES * 60));
 
-    $stmt = db()->prepare(
-        'SELECT COUNT(*) AS fail_count, MAX(attempted_at) AS last_attempt
-         FROM login_attempts
-         WHERE was_successful = 0
-           AND attempted_at >= :cutoff
-           AND (ip_address = :ip OR identifier = :ident)'
-    );
-    $stmt->execute([
-        ':cutoff' => $cutoff,
-        ':ip'     => $ip,
-        ':ident'  => strtolower(trim($identifier)),
-    ]);
-    $row = $stmt->fetch() ?: ['fail_count' => 0, 'last_attempt' => null];
-    $count = (int) $row['fail_count'];
+        $stmt = db()->prepare(
+            'SELECT COUNT(*) AS fail_count, MAX(attempted_at) AS last_attempt
+             FROM login_attempts
+             WHERE was_successful = 0
+               AND attempted_at >= :cutoff
+               AND (ip_address = :ip OR identifier = :ident)'
+        );
+        $stmt->execute([
+            ':cutoff' => $cutoff,
+            ':ip'     => $ip,
+            ':ident'  => strtolower(trim($identifier)),
+        ]);
+        $row = $stmt->fetch() ?: ['fail_count' => 0, 'last_attempt' => null];
+        $count = (int) $row['fail_count'];
 
-    if ($count >= LOGIN_MAX_ATTEMPTS) {
-        $lastTs = $row['last_attempt'] ? strtotime((string) $row['last_attempt']) : time();
-        $retryAfter = max(1, (int) ceil((($lastTs + LOGIN_LOCKOUT_MINUTES * 60) - time()) / 60));
-        return ['blocked' => true, 'attempts' => $count, 'retry_minutes' => $retryAfter];
+        if ($count >= LOGIN_MAX_ATTEMPTS) {
+            $lastTs = $row['last_attempt'] ? strtotime((string) $row['last_attempt']) : time();
+            $retryAfter = max(1, (int) ceil((($lastTs + LOGIN_LOCKOUT_MINUTES * 60) - time()) / 60));
+            return ['blocked' => true, 'attempts' => $count, 'retry_minutes' => $retryAfter];
+        }
+
+        return ['blocked' => false, 'attempts' => $count, 'retry_minutes' => 0];
+    } catch (Throwable $e) {
+        app_log('warning', 'check_login_rate_limit error: ' . $e->getMessage());
+        return ['blocked' => false, 'attempts' => 0, 'retry_minutes' => 0];
     }
-
-    return ['blocked' => false, 'attempts' => $count, 'retry_minutes' => 0];
 }
 
 /**
@@ -124,22 +134,26 @@ function check_login_rate_limit(string $identifier): array
  */
 function record_login_attempt(string $identifier, bool $success): void
 {
-    $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
-    $stmt = db()->prepare(
-        'INSERT INTO login_attempts (ip_address, identifier, was_successful) VALUES (:ip, :ident, :ok)'
-    );
-    $stmt->execute([
-        ':ip'    => $ip,
-        ':ident' => strtolower(trim($identifier)),
-        ':ok'    => $success ? 1 : 0,
-    ]);
-
-    if ($success) {
-        // Bersihkan percobaan gagal lama untuk IP ini
-        $clean = db()->prepare(
-            'DELETE FROM login_attempts WHERE ip_address = :ip AND was_successful = 0'
+    try {
+        $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? '0.0.0.0');
+        $stmt = db()->prepare(
+            'INSERT INTO login_attempts (ip_address, identifier, was_successful) VALUES (:ip, :ident, :ok)'
         );
-        $clean->execute([':ip' => $ip]);
+        $stmt->execute([
+            ':ip'    => $ip,
+            ':ident' => strtolower(trim($identifier)),
+            ':ok'    => $success ? 1 : 0,
+        ]);
+
+        if ($success) {
+            // Bersihkan percobaan gagal lama untuk IP ini
+            $clean = db()->prepare(
+                'DELETE FROM login_attempts WHERE ip_address = :ip AND was_successful = 0'
+            );
+            $clean->execute([':ip' => $ip]);
+        }
+    } catch (Throwable $e) {
+        app_log('warning', 'record_login_attempt error: ' . $e->getMessage());
     }
 }
 

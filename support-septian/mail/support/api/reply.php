@@ -53,7 +53,7 @@ try {
         'variables'     => [
             'nama_penerima' => $recipientName !== '' ? $recipientName : 'Pelanggan',
             'nama_pengirim' => $admin['name'] ?: DEFAULT_OFFICIAL_NAME,
-            'subjek'        => preg_replace('/^re:\s*/i', '', $subject),
+            'subjek'        => (string) (preg_replace('/^re:\s*/i', '', $subject) ?? $subject),
         ],
     ]);
 

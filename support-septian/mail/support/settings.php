@@ -7,6 +7,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/gmail-client.php';
 require_once __DIR__ . '/includes/email-renderer.php';
 
 $currentAdmin = require_admin();

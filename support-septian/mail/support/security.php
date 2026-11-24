@@ -7,6 +7,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/gmail-client.php';
 
 $currentAdmin = require_admin();
 $pageTitle    = 'Keamanan Admin';
@@ -14,6 +15,18 @@ $activePage   = 'security';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf(false);
+    $formType = (string) ($_POST['form_type'] ?? 'change_password');
+
+    if ($formType === 'clear_error_logs') {
+        try {
+            $cleared = clear_error_logs();
+            log_activity('error_logs_cleared', 'Admin membersihkan ' . $cleared . ' file log error server.', 'security', (string) $currentAdmin['id']);
+            set_flash('success', 'Log error berhasil dibersihkan (' . $cleared . ' file).');
+        } catch (Throwable $e) {
+            set_flash('error', 'Gagal membersihkan log error: ' . $e->getMessage());
+        }
+        redirect_to('security.php#server-error-logs');
+    }
 
     $currentPass = (string) ($_POST['current_password'] ?? '');
     $newPass     = (string) ($_POST['new_password'] ?? '');
@@ -52,20 +65,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_to('security.php');
 }
 
-// Ambil riwayat aktivitas & percobaan login terbaru
-$logs = db()->query(
-    'SELECT a.*, ad.name AS admin_name
-     FROM activity_logs a
-     LEFT JOIN admins ad ON ad.id = a.admin_id
-     ORDER BY a.id DESC
-     LIMIT 30'
-)->fetchAll();
+// Ambil riwayat aktivitas & percobaan login terbaru (dengan perlindungan try/catch)
+$logs = [];
+try {
+    $logs = db()->query(
+        'SELECT a.*, ad.name AS admin_name
+         FROM activity_logs a
+         LEFT JOIN admins ad ON ad.id = a.admin_id
+         ORDER BY a.id DESC
+         LIMIT 30'
+    )->fetchAll();
+} catch (Throwable $e) {
+    app_log('error', 'security.php gagal memuat activity_logs: ' . $e->getMessage());
+}
 
-$failedRecent = (int) db()->query(
-    'SELECT COUNT(*) FROM login_attempts WHERE was_successful = 0 AND attempted_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)'
-)->fetchColumn();
+$failedRecent = 0;
+try {
+    $failedRecent = (int) db()->query(
+        'SELECT COUNT(*) FROM login_attempts WHERE was_successful = 0 AND attempted_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)'
+    )->fetchColumn();
+} catch (Throwable $e) {
+    app_log('warning', 'security.php gagal memuat login_attempts: ' . $e->getMessage());
+}
 
-$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['SERVER_PORT'] ?? null) == 443);
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || (($_SERVER['SERVER_PORT'] ?? null) == 443)
+    || (strtolower($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+
+$serverErrorLogs = read_recent_error_logs(80);
+$envChecks = [
+    'Versi PHP'           => PHP_VERSION . (version_compare(PHP_VERSION, '8.1.0', '>=') ? ' (Ideal)' : ' (Disarankan 8.1+)'),
+    'PDO MySQL'           => extension_loaded('pdo_mysql') ? 'Aktif' : 'Tidak Aktif',
+    'OpenSSL (Enkripsi)'  => extension_loaded('openssl') ? 'Aktif' : 'Tidak Aktif',
+    'MBString / DOM'      => (extension_loaded('mbstring') ? 'mbstring OK' : 'mbstring Fallback') . ' · ' . (class_exists('DOMDocument') ? 'DOM OK' : 'DOM Fallback'),
+    'PHPMailer'           => class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? 'Terpasang' : 'Belum Terpasang',
+    'Google API SDK'      => class_exists(\Google\Client::class) ? 'Terpasang' : 'Belum Terpasang',
+    'Ekstensi PHP IMAP'   => function_exists('imap_open') ? 'Aktif' : 'Tidak Aktif',
+    'Folder storage/logs' => (is_dir(LOGS_PATH) && is_writable(LOGS_PATH)) ? 'Dapat Ditulis (Aktif)' : 'Tidak Dapat Ditulis (CHMOD 755/750)',
+];
 
 require __DIR__ . '/includes/header.php';
 ?>
@@ -148,19 +185,69 @@ require __DIR__ . '/includes/header.php';
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($logs as $log): ?>
+                <?php if (empty($logs)): ?>
                     <tr>
-                        <td class="tabular-nums nowrap"><?= e(format_tanggal_id($log['created_at'])) ?></td>
-                        <td class="nowrap"><?= e($log['admin_name'] ?: 'Sistem') ?></td>
-                        <td><code><?= e($log['action']) ?></code></td>
-                        <td><?= e($log['description']) ?></td>
-                        <td class="tabular-nums nowrap"><?= e($log['ip_address'] ?: '-') ?></td>
-                        <td><span class="status-text status-<?= e($log['status']) ?>"><?= e(ucfirst($log['status'])) ?></span></td>
+                        <td colspan="6" class="muted" style="text-align:center;padding:20px;">Belum ada catatan aktivitas.</td>
                     </tr>
-                <?php endforeach; ?>
+                <?php else: ?>
+                    <?php foreach ($logs as $log): ?>
+                        <?php $logStatus = (string) ($log['status'] ?? 'success'); ?>
+                        <tr>
+                            <td class="tabular-nums nowrap"><?= e(format_tanggal_id($log['created_at'] ?? null)) ?></td>
+                            <td class="nowrap"><?= e((string) ($log['admin_name'] ?: 'Sistem')) ?></td>
+                            <td><code><?= e((string) ($log['action'] ?? '')) ?></code></td>
+                            <td><?= e((string) ($log['description'] ?? '')) ?></td>
+                            <td class="tabular-nums nowrap"><?= e((string) ($log['ip_address'] ?: '-')) ?></td>
+                            <td><span class="status-text status-<?= e($logStatus) ?>"><?= e(ucfirst($logStatus)) ?></span></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
     </div>
+</section>
+
+<!-- Panel Diagnostik Server & Log Error PHP / Aplikasi -->
+<section class="card" id="server-error-logs" style="margin-top:20px;">
+    <div class="card-header">
+        <div>
+            <h2 class="card-title">Diagnostik Server &amp; Log Error PHP / Aplikasi</h2>
+            <p class="card-subtitle">Pantau kesehatan lingkungan PHP dan lihat catatan error langsung dari <code>storage/logs/</code> (password &amp; token otomatis disensor)</p>
+        </div>
+        <div class="page-actions">
+            <a href="<?= e(base_url('security.php#server-error-logs')) ?>" class="btn btn-secondary btn-sm">Muat Ulang Log</a>
+            <form method="post" style="display:inline;" onsubmit="return confirm('Bersihkan seluruh isi file log error di storage/logs/?');">
+                <?= csrf_field() ?>
+                <input type="hidden" name="form_type" value="clear_error_logs">
+                <button type="submit" class="btn btn-danger-outline btn-sm">Bersihkan Log</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="spec-box" style="margin-bottom:16px;">
+        <?php foreach ($envChecks as $label => $statusVal): ?>
+            <div class="spec-row">
+                <span class="spec-label"><?= e($label) ?></span>
+                <span class="spec-val"><?= e($statusVal) ?></span>
+            </div>
+        <?php endforeach; ?>
+    </div>
+
+    <?php if (empty($serverErrorLogs)): ?>
+        <div class="alert alert-success">
+            <span>Tidak ada catatan error di <code>storage/logs/</code>. Apabila terjadi error baru di server, detailnya akan otomatis muncul di sini.</span>
+        </div>
+    <?php else: ?>
+        <?php foreach ($serverErrorLogs as $logFile): ?>
+            <div style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:13px;">
+                    <strong><code><?= e($logFile['file']) ?></code></strong>
+                    <span class="muted">Diperbarui <?= e(format_tanggal_id($logFile['updated_at'])) ?> &middot; <?= e(format_bytes((int) $logFile['size'])) ?></span>
+                </div>
+                <pre class="code-textarea" style="padding:12px;background:var(--bg-canvas);border:1px solid var(--border-color);border-radius:var(--radius-sm);max-height:280px;overflow:auto;white-space:pre-wrap;font-size:12px;line-height:1.5;margin:0;"><?= e(implode("\n", $logFile['lines'])) ?></pre>
+            </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
 </section>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>

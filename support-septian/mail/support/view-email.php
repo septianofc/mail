@@ -122,7 +122,7 @@ require __DIR__ . '/includes/header.php';
             <article class="card thread-message">
                 <div class="thread-msg-header">
                     <div class="sender-block">
-                        <div class="sender-avatar"><?= e(strtoupper(mb_substr($msg['from_name'] ?: '?', 0, 1))) ?></div>
+                        <div class="sender-avatar"><?= e(strtoupper(safe_substr((string) ($msg['from_name'] ?: '?'), 0, 1))) ?></div>
                         <div>
                             <div class="sender-name-line">
                                 <strong><?= e($msg['from_name']) ?></strong>
@@ -212,7 +212,7 @@ require __DIR__ . '/includes/header.php';
                 <div class="editor-meta-grid">
                     <div class="form-group">
                         <label for="editorSubject">Subjek</label>
-                        <input type="text" id="editorSubject" name="subject" value="<?= e(preg_match('/^re:/i', $threadData['subject']) ? $threadData['subject'] : 'Re: ' . $threadData['subject']) ?>" required>
+                        <input type="text" id="editorSubject" name="subject" value="<?= e(preg_match('/^re:/i', (string) ($threadData['subject'] ?? '')) ? (string) ($threadData['subject'] ?? '') : 'Re: ' . (string) ($threadData['subject'] ?? '')) ?>" required>
                     </div>
                     <div class="form-group">
                         <label for="templateSelector">Pilih Template Profesional</label>
@@ -220,11 +220,11 @@ require __DIR__ . '/includes/header.php';
                             <option value="">-- Muat Template --</option>
                             <?php foreach ($templatesAll as $t): ?>
                                 <option value="<?= (int) $t['id'] ?>"
-                                        data-category="<?= e($t['category']) ?>"
-                                        data-default="<?= (int) $t['is_default'] ?>"
-                                        data-subject="<?= e($t['subject_template']) ?>"
-                                        data-body="<?= e($t['body_html']) ?>">
-                                    [<?= e(strtoupper($t['category'])) ?>] <?= e($t['name']) ?><?= (int) $t['is_default'] === 1 ? ' (Default)' : '' ?>
+                                        data-category="<?= e((string) ($t['category'] ?? '')) ?>"
+                                        data-default="<?= (int) ($t['is_default'] ?? 0) ?>"
+                                        data-subject="<?= e((string) ($t['subject_template'] ?? '')) ?>"
+                                        data-body="<?= e((string) ($t['body_html'] ?? '')) ?>">
+                                    [<?= e(strtoupper((string) ($t['category'] ?? ''))) ?>] <?= e((string) ($t['name'] ?? '')) ?><?= (int) ($t['is_default'] ?? 0) === 1 ? ' (Default)' : '' ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>

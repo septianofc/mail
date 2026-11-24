@@ -335,44 +335,51 @@ function mail_list_messages(string $folder = 'inbox', int $maxResults = 20, ?str
     $messages = [];
     foreach ($items as $ref) {
         $msgId = (string) $ref->getId();
-        $msg = $service->users_messages->get('me', $msgId, [
-            'format'          => 'metadata',
-            'metadataHeaders' => ['From', 'To', 'Subject', 'Date'],
-        ]);
+        if ($msgId === '') {
+            continue;
+        }
+        try {
+            $msg = $service->users_messages->get('me', $msgId, [
+                'format'          => 'metadata',
+                'metadataHeaders' => ['From', 'To', 'Subject', 'Date'],
+            ]);
 
-        $payload = $msg->getPayload();
-        $headers = $payload ? gmail_extract_headers((array) $payload->getHeaders()) : [];
-        $from    = parse_sender_header($headers['from'] ?? '');
-        $labels  = (array) $msg->getLabelIds();
-        $dateRaw = $headers['date'] ?? '';
+            $payload = $msg->getPayload();
+            $headers = $payload ? gmail_extract_headers((array) $payload->getHeaders()) : [];
+            $from    = parse_sender_header((string) ($headers['from'] ?? ''));
+            $labels  = (array) $msg->getLabelIds();
+            $dateRaw = (string) ($headers['date'] ?? '');
 
-        $hasAttachments = false;
-        if ($payload && is_array($payload->getParts())) {
-            foreach ($payload->getParts() as $part) {
-                if ((string) $part->getFilename() !== '') {
-                    $hasAttachments = true;
-                    break;
+            $hasAttachments = false;
+            if ($payload && is_array($payload->getParts())) {
+                foreach ($payload->getParts() as $part) {
+                    if ((string) $part->getFilename() !== '') {
+                        $hasAttachments = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        $messages[] = [
-            'id'              => $msgId,
-            'draft_id'        => $draftMap[$msgId] ?? null,
-            'thread_id'       => (string) $msg->getThreadId(),
-            'from_name'       => $from['name'] ?: '(Tanpa Nama)',
-            'from_email'      => $from['email'],
-            'to'              => $headers['to'] ?? '',
-            'subject'         => ($headers['subject'] ?? '') !== '' ? $headers['subject'] : '(Tanpa Subjek)',
-            'snippet'         => html_entity_decode((string) $msg->getSnippet(), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
-            'date_raw'        => $dateRaw,
-            'date_short'      => format_short_date($dateRaw),
-            'date_full'       => format_tanggal_id($dateRaw, true),
-            'is_unread'       => in_array('UNREAD', $labels, true),
-            'is_starred'      => in_array('STARRED', $labels, true),
-            'has_attachments' => $hasAttachments,
-            'labels'          => $labels,
-        ];
+            $messages[] = [
+                'id'              => $msgId,
+                'draft_id'        => $draftMap[$msgId] ?? null,
+                'thread_id'       => (string) $msg->getThreadId(),
+                'from_name'       => $from['name'] ?: '(Tanpa Nama)',
+                'from_email'      => $from['email'],
+                'to'              => (string) ($headers['to'] ?? ''),
+                'subject'         => ($headers['subject'] ?? '') !== '' ? (string) $headers['subject'] : '(Tanpa Subjek)',
+                'snippet'         => html_entity_decode((string) $msg->getSnippet(), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+                'date_raw'        => $dateRaw,
+                'date_short'      => format_short_date($dateRaw),
+                'date_full'       => format_tanggal_id($dateRaw, true),
+                'is_unread'       => in_array('UNREAD', $labels, true),
+                'is_starred'      => in_array('STARRED', $labels, true),
+                'has_attachments' => $hasAttachments,
+                'labels'          => $labels,
+            ];
+        } catch (Throwable $e) {
+            app_log('warning', 'Lewati pesan Gmail ' . $msgId . ' di folder ' . $folder . ': ' . $e->getMessage());
+        }
     }
 
     return [

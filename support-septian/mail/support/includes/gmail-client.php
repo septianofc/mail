@@ -79,35 +79,40 @@ function create_google_oauth_client(): \Google\Client
  */
 function get_stored_oauth_token(): ?array
 {
-    $officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
-    $stmt = db()->prepare(
-        'SELECT * FROM oauth_tokens WHERE provider = :prov AND LOWER(account_email) = LOWER(:email) LIMIT 1'
-    );
-    $stmt->execute([
-        ':prov'  => 'google_gmail',
-        ':email' => $officialEmail,
-    ]);
-    $row = $stmt->fetch();
-    if (!$row) {
+    try {
+        $officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
+        $stmt = db()->prepare(
+            'SELECT * FROM oauth_tokens WHERE provider = :prov AND LOWER(account_email) = LOWER(:email) LIMIT 1'
+        );
+        $stmt->execute([
+            ':prov'  => 'google_gmail',
+            ':email' => $officialEmail,
+        ]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            return null;
+        }
+
+        $accessToken  = crypto_decrypt((string) ($row['access_token_enc'] ?? ''));
+        $refreshToken = crypto_decrypt((string) ($row['refresh_token_enc'] ?? ''));
+
+        return [
+            'id'                => (int) $row['id'],
+            'account_email'     => (string) ($row['account_email'] ?? $officialEmail),
+            'access_token'      => $accessToken,
+            'refresh_token'     => $refreshToken,
+            'token_type'        => (string) ($row['token_type'] ?: 'Bearer'),
+            'scope'             => (string) ($row['scope'] ?? ''),
+            'expires_at'        => (string) ($row['expires_at'] ?? ''),
+            'status'            => (string) ($row['status'] ?? 'disconnected'),
+            'last_refreshed_at' => $row['last_refreshed_at'] ?? null,
+            'last_error'        => $row['last_error'] ?? null,
+            'updated_at'        => $row['updated_at'] ?? null,
+        ];
+    } catch (Throwable $e) {
+        app_log('error', 'get_stored_oauth_token error: ' . $e->getMessage());
         return null;
     }
-
-    $accessToken  = crypto_decrypt((string) $row['access_token_enc']);
-    $refreshToken = crypto_decrypt((string) ($row['refresh_token_enc'] ?? ''));
-
-    return [
-        'id'              => (int) $row['id'],
-        'account_email'   => (string) $row['account_email'],
-        'access_token'    => $accessToken,
-        'refresh_token'   => $refreshToken,
-        'token_type'      => (string) ($row['token_type'] ?: 'Bearer'),
-        'scope'           => (string) ($row['scope'] ?? ''),
-        'expires_at'      => (string) $row['expires_at'],
-        'status'          => (string) $row['status'],
-        'last_refreshed_at' => $row['last_refreshed_at'],
-        'last_error'      => $row['last_error'],
-        'updated_at'      => $row['updated_at'],
-    ];
 }
 
 /**
@@ -314,7 +319,7 @@ function get_mail_connection_status(): array
         if (!$phpmailerInstalled) {
             $activeLabel = 'PHPMailer Belum Terpasang';
             $activeBadge = 'warning';
-            $notice      = 'Library phpmailer/phpmailer belum ditemukan di vendor/. Jalankan "composer install --no-dev --optimize-autoloader" lalu unggah folder vendor/.';
+            $notice      = 'Library PHPMailer belum ditemukan di vendor/ maupun includes/phpmailer/. Unggah manual folder src PHPMailer ke includes/phpmailer/src/ atau instal via Composer.';
         } elseif ($appPassSet && $appPassEmail === $officialEmail) {
             $activeReady = true;
             $activeLabel = 'Terhubung via PHPMailer SMTP Gmail (SSL:465)';

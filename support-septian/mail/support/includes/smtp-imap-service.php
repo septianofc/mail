@@ -16,6 +16,7 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === basename(__FILE__)) {
 
 require_once __DIR__ . '/database.php';
 require_once __DIR__ . '/functions.php';
+require_once __DIR__ . '/email-renderer.php';
 
 /**
  * Cek apakah library PHPMailer (via Composer) sudah terpasang.
@@ -85,7 +86,7 @@ function phpmailer_create_configured(array $creds, bool $captureDebug = false, a
 {
     if (!is_phpmailer_installed()) {
         throw new RuntimeException(
-            'Library PHPMailer belum terpasang di vendor/. Jalankan "composer install --no-dev --optimize-autoloader" lalu unggah folder mail/support/vendor/ ke hosting.'
+            'Library PHPMailer belum terpasang di vendor/ maupun includes/phpmailer/. Unggah folder src PHPMailer ke /mail/support/includes/phpmailer/src/ atau instal via Composer.'
         );
     }
 
@@ -338,7 +339,7 @@ function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePa
     }
 
     if (!$phpmailerReady) {
-        $diag['smtp_error'] = 'PHPMailer belum terpasang di folder vendor/. Jalankan composer install --no-dev --optimize-autoloader.';
+        $diag['smtp_error'] = 'PHPMailer belum terpasang di vendor/ maupun includes/phpmailer/. Unggah manual file PHPMailer ke includes/phpmailer/src/ atau instal via Composer.';
         $diag['message']    = $diag['smtp_error'];
         return $diag;
     }
@@ -430,23 +431,66 @@ function test_google_app_password_connection(?string $overrideEmail = null, ?str
 }
 
 /**
- * Pemetaan nama folder aplikasi ke nama mailbox IMAP Gmail.
+ * Daftar kandidat nama folder IMAP Gmail (mendukung akun berbahasa Inggris maupun Bahasa Indonesia).
  */
-function imap_folder_name(string $folder): string
+function imap_folder_candidates(string $folder): array
 {
     return match (strtolower($folder)) {
-        'sent'    => '[Gmail]/Sent Mail',
-        'drafts'  => '[Gmail]/Drafts',
-        'starred' => '[Gmail]/Starred',
-        'spam'    => '[Gmail]/Spam',
-        'trash'   => '[Gmail]/Trash',
-        'all'     => '[Gmail]/All Mail',
-        default   => 'INBOX',
+        'sent'    => ['[Gmail]/Sent Mail', '[Gmail]/Pesan Terkirim', '[Gmail]/Terkirim', '[Google Mail]/Sent Mail', 'Sent', 'Sent Mail'],
+        'drafts'  => ['[Gmail]/Drafts', '[Gmail]/Draf', '[Google Mail]/Drafts', 'Drafts'],
+        'starred' => ['[Gmail]/Starred', '[Gmail]/Berbintang', '[Google Mail]/Starred', 'Starred'],
+        'spam'    => ['[Gmail]/Spam', '[Google Mail]/Spam', 'Spam', 'Junk'],
+        'trash'   => ['[Gmail]/Trash', '[Gmail]/Sampah', '[Gmail]/Bin', '[Google Mail]/Trash', 'Trash'],
+        'all'     => ['[Gmail]/All Mail', '[Gmail]/Semua Email', '[Google Mail]/All Mail', 'All Mail'],
+        default   => ['INBOX'],
     };
 }
 
 /**
- * Buka koneksi IMAP ke folder Gmail tertentu.
+ * Pemetaan default nama folder aplikasi ke nama mailbox IMAP Gmail.
+ */
+function imap_folder_name(string $folder): string
+{
+    return imap_folder_candidates($folder)[0];
+}
+
+/**
+ * Temukan nama mailbox IMAP aktual di server Gmail (otomatis mendeteksi bahasa Inggris / Indonesia).
+ */
+function imap_resolve_folder_name($stream, array $creds, string $folder): string
+{
+    $key = strtolower($folder);
+    if ($key === 'inbox') {
+        return 'INBOX';
+    }
+
+    static $discoveredMap = null;
+    if ($discoveredMap === null) {
+        $discoveredMap = [];
+        $ref = sprintf('{%s:%d/imap/ssl}', $creds['imap_host'], $creds['imap_port']);
+        $boxes = @imap_list($stream, $ref, '*');
+        if (is_array($boxes)) {
+            $available = [];
+            foreach ($boxes as $box) {
+                $short = str_replace($ref, '', (string) $box);
+                $available[strtolower($short)] = $short;
+            }
+            foreach (['sent', 'drafts', 'starred', 'spam', 'trash', 'all'] as $fKey) {
+                foreach (imap_folder_candidates($fKey) as $cand) {
+                    if (isset($available[strtolower($cand)])) {
+                        $discoveredMap[$fKey] = $available[strtolower($cand)];
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    return $discoveredMap[$key] ?? imap_folder_name($key);
+}
+
+/**
+ * Buka koneksi IMAP ke folder Gmail tertentu (mendukung fallback otomatis nama folder lokal Gmail).
  */
 function imap_connect_folder(string $folder = 'inbox')
 {
@@ -457,13 +501,28 @@ function imap_connect_folder(string $folder = 'inbox')
     }
 
     $creds   = app_password_credentials();
-    $mailbox = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], $creds['imap_port'], imap_folder_name($folder));
-    $stream  = @imap_open($mailbox, $creds['email'], $creds['password'], 0, 1);
-    if (!$stream) {
-        $err = imap_last_error() ?: 'Autentikasi IMAP gagal.';
-        throw new RuntimeException('Gagal membuka folder Gmail via IMAP: ' . redact_sensitive_text($err));
+    $ref     = sprintf('{%s:%d/imap/ssl}', $creds['imap_host'], $creds['imap_port']);
+    $primary = $ref . imap_folder_name($folder);
+    $stream  = @imap_open($primary, $creds['email'], $creds['password'], 0, 1);
+    if ($stream) {
+        return $stream;
     }
-    return $stream;
+
+    // Jika folder default (mis. [Gmail]/Sent Mail) gagal karena bahasa akun Gmail Indonesia, deteksi otomatis via HALFOPEN
+    $half = @imap_open($ref . 'INBOX', $creds['email'], $creds['password'], OP_HALFOPEN, 1);
+    if ($half) {
+        $resolvedName = imap_resolve_folder_name($half, $creds, $folder);
+        @imap_close($half);
+        if ($resolvedName !== imap_folder_name($folder)) {
+            $retryStream = @imap_open($ref . $resolvedName, $creds['email'], $creds['password'], 0, 1);
+            if ($retryStream) {
+                return $retryStream;
+            }
+        }
+    }
+
+    $err = (string) (imap_last_error() ?: 'Autentikasi IMAP atau nama folder Gmail gagal.');
+    throw new RuntimeException('Gagal membuka folder Gmail (' . $folder . ') via IMAP: ' . redact_sensitive_text($err));
 }
 
 /**
@@ -471,7 +530,13 @@ function imap_connect_folder(string $folder = 'inbox')
  */
 function imap_decode_header_str(string $value): string
 {
-    $decoded = imap_mime_header_decode($value);
+    if ($value === '') {
+        return '';
+    }
+    $decoded = @imap_mime_header_decode($value);
+    if (!is_array($decoded)) {
+        return trim($value);
+    }
     $result = '';
     foreach ($decoded as $part) {
         $charset = strtoupper((string) ($part->charset ?? 'UTF-8'));
@@ -497,7 +562,10 @@ function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageT
             $criteria = 'TEXT "' . $cleanQ . '"';
         }
 
-        $uids = imap_search($stream, $criteria, SE_UID) ?: [];
+        $uids = @imap_search($stream, $criteria, SE_UID);
+        if (!is_array($uids)) {
+            $uids = [];
+        }
         rsort($uids);
 
         $total  = count($uids);
@@ -507,8 +575,8 @@ function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageT
 
         $messages = [];
         foreach ($slice as $uid) {
-            $overviewList = imap_fetch_overview($stream, (string) $uid, FT_UID);
-            $ov = $overviewList[0] ?? null;
+            $overviewList = @imap_fetch_overview($stream, (string) $uid, FT_UID);
+            $ov = (is_array($overviewList) && isset($overviewList[0])) ? $overviewList[0] : null;
             if (!$ov) {
                 continue;
             }
@@ -520,7 +588,7 @@ function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageT
             $messages[] = [
                 'id'              => $folder . ':' . $uid,
                 'thread_id'       => $folder . ':' . $uid,
-                'from_name'       => $from['name'],
+                'from_name'       => $from['name'] ?: '(Tanpa Nama)',
                 'from_email'      => $from['email'],
                 'to'              => imap_decode_header_str((string) ($ov->to ?? '')),
                 'subject'         => $subject !== '' ? $subject : '(Tanpa Subjek)',
@@ -542,7 +610,7 @@ function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageT
             'transport'       => 'app_password_imap',
         ];
     } finally {
-        imap_close($stream);
+        @imap_close($stream);
     }
 }
 
@@ -559,13 +627,16 @@ function imap_get_message_detail(string $compositeId): array
 
     $stream = imap_connect_folder($folder);
     try {
-        $msgNo = imap_msgno($stream, (int) $uid);
+        $msgNo = (int) @imap_msgno($stream, (int) $uid);
         if ($msgNo <= 0) {
             throw new RuntimeException('Email tidak ditemukan di folder IMAP.');
         }
 
-        $header    = imap_headerinfo($stream, $msgNo);
-        $structure = imap_fetchstructure($stream, (int) $uid, FT_UID);
+        $header    = @imap_headerinfo($stream, $msgNo);
+        $structure = @imap_fetchstructure($stream, (int) $uid, FT_UID);
+        if (!$header) {
+            throw new RuntimeException('Gagal membaca header pesan dari server IMAP.');
+        }
         $fromRaw   = imap_decode_header_str((string) ($header->fromaddress ?? ''));
         $from      = parse_sender_header($fromRaw);
         $toRaw     = imap_decode_header_str((string) ($header->toaddress ?? ''));
@@ -629,7 +700,11 @@ function imap_get_message_detail(string $compositeId): array
             }
         };
 
-        $extractParts($structure);
+        if (is_object($structure)) {
+            $extractParts($structure);
+        } else {
+            $plainBody = (string) @imap_body($stream, (int) $uid, FT_UID | FT_PEEK);
+        }
 
         // Tandai sudah dibaca
         @imap_setflag_full($stream, (string) $uid, '\\Seen', ST_UID);
@@ -691,23 +766,15 @@ function imap_get_mailbox_stats(): array
     }
 
     $creds = app_password_credentials();
-    $map = [
-        'inbox'   => 'INBOX',
-        'sent'    => '[Gmail]/Sent Mail',
-        'drafts'  => '[Gmail]/Drafts',
-        'starred' => '[Gmail]/Starred',
-        'spam'    => '[Gmail]/Spam',
-        'trash'   => '[Gmail]/Trash',
-    ];
-
     $baseStream = @imap_open(sprintf('{%s:%d/imap/ssl}INBOX', $creds['imap_host'], $creds['imap_port']), $creds['email'], $creds['password'], OP_HALFOPEN, 1);
     if (!$baseStream) {
         return $stats;
     }
 
     try {
-        foreach ($map as $key => $folder) {
-            $mbx = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], $creds['imap_port'], $folder);
+        foreach (['inbox', 'sent', 'drafts', 'starred', 'spam', 'trash'] as $key) {
+            $folderName = imap_resolve_folder_name($baseStream, $creds, $key);
+            $mbx = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], $creds['imap_port'], $folderName);
             $st = @imap_status($baseStream, $mbx, SA_MESSAGES | SA_UNSEEN);
             if ($st) {
                 if ($key === 'inbox') {
@@ -719,14 +786,14 @@ function imap_get_mailbox_stats(): array
             }
         }
     } finally {
-        imap_close($baseStream);
+        @imap_close($baseStream);
     }
 
     return $stats;
 }
 
 /**
- * Aksi IMAP: mark_read, mark_unread, star, unstar, trash, archive, delete.
+ * Aksi IMAP: mark_read, mark_unread, star, unstar, trash, untrash, spam, not_spam, archive, delete.
  */
 function imap_perform_action(string $compositeId, string $action): bool
 {
@@ -736,39 +803,52 @@ function imap_perform_action(string $compositeId, string $action): bool
         [$folder, $uid] = explode(':', $compositeId, 2);
     }
 
+    $creds  = app_password_credentials();
     $stream = imap_connect_folder($folder);
     try {
         switch ($action) {
             case 'mark_read':
-                return (bool) imap_setflag_full($stream, $uid, '\\Seen', ST_UID);
+                return (bool) @imap_setflag_full($stream, $uid, '\\Seen', ST_UID);
             case 'mark_unread':
-                return (bool) imap_clearflag_full($stream, $uid, '\\Seen', ST_UID);
+                return (bool) @imap_clearflag_full($stream, $uid, '\\Seen', ST_UID);
             case 'star':
-                return (bool) imap_setflag_full($stream, $uid, '\\Flagged', ST_UID);
+                return (bool) @imap_setflag_full($stream, $uid, '\\Flagged', ST_UID);
             case 'unstar':
-                return (bool) imap_clearflag_full($stream, $uid, '\\Flagged', ST_UID);
+                return (bool) @imap_clearflag_full($stream, $uid, '\\Flagged', ST_UID);
             case 'trash':
-                $ok = imap_mail_move($stream, $uid, '[Gmail]/Trash', CP_UID);
-                imap_expunge($stream);
+                $target = imap_resolve_folder_name($stream, $creds, 'trash');
+                $ok = @imap_mail_move($stream, $uid, $target, CP_UID);
+                @imap_expunge($stream);
+                return (bool) $ok;
+            case 'untrash':
+            case 'not_spam':
+                $ok = @imap_mail_move($stream, $uid, 'INBOX', CP_UID);
+                @imap_expunge($stream);
+                return (bool) $ok;
+            case 'spam':
+                $target = imap_resolve_folder_name($stream, $creds, 'spam');
+                $ok = @imap_mail_move($stream, $uid, $target, CP_UID);
+                @imap_expunge($stream);
                 return (bool) $ok;
             case 'archive':
-                $ok = imap_mail_move($stream, $uid, '[Gmail]/All Mail', CP_UID);
-                imap_expunge($stream);
+                $target = imap_resolve_folder_name($stream, $creds, 'all');
+                $ok = @imap_mail_move($stream, $uid, $target, CP_UID);
+                @imap_expunge($stream);
                 return (bool) $ok;
             case 'delete':
-                $ok = imap_delete($stream, $uid, FT_UID);
-                imap_expunge($stream);
+                $ok = @imap_delete($stream, $uid, FT_UID);
+                @imap_expunge($stream);
                 return (bool) $ok;
             default:
                 return false;
         }
     } finally {
-        imap_close($stream);
+        @imap_close($stream);
     }
 }
 
 /**
- * Simpan draft melalui IMAP ke [Gmail]/Drafts.
+ * Simpan draft melalui IMAP ke folder Drafts Gmail (Inggris / Indonesia).
  */
 function imap_save_draft(string $rawMime): array
 {
@@ -776,19 +856,17 @@ function imap_save_draft(string $rawMime): array
         throw new RuntimeException('Ekstensi php-imap diperlukan untuk menyimpan draft dalam mode App Password.');
     }
     $creds   = app_password_credentials();
-    $mailbox = sprintf('{%s:%d/imap/ssl}[Gmail]/Drafts', $creds['imap_host'], $creds['imap_port']);
-    $stream  = @imap_open($mailbox, $creds['email'], $creds['password'], 0, 1);
-    if (!$stream) {
-        throw new RuntimeException('Gagal membuka folder Drafts Gmail via IMAP.');
-    }
+    $stream  = imap_connect_folder('drafts');
     try {
-        $ok = imap_append($stream, $mailbox, $rawMime, '\\Draft');
+        $draftFolder = imap_resolve_folder_name($stream, $creds, 'drafts');
+        $mailbox     = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], $creds['imap_port'], $draftFolder);
+        $ok = @imap_append($stream, $mailbox, $rawMime, '\\Draft');
         if (!$ok) {
             throw new RuntimeException('Gagal menyimpan draft ke Gmail.');
         }
         return ['draft_id' => 'imap_draft_' . time(), 'transport' => 'app_password_imap'];
     } finally {
-        imap_close($stream);
+        @imap_close($stream);
     }
 }
 

@@ -3,15 +3,17 @@
 # Path: /mail/support/.htaccess
 # ============================================================================
 
-Options -Indexes -MultiViews
-ServerSignature Off
+# Matikan listing direktori (aman untuk sebagian besar cPanel / LiteSpeed)
+<IfModule mod_autoindex.c>
+    Options -Indexes
+</IfModule>
 
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteBase /mail/support/
 
     # Paksa HTTPS di produksi (nonaktifkan hanya saat testing lokal)
     RewriteCond %{HTTPS} !=on
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
     RewriteCond %{HTTP_HOST} !^localhost [NC]
     RewriteCond %{HTTP_HOST} !^127\.0\.0\.1 [NC]
     RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]

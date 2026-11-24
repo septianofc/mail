@@ -42,6 +42,10 @@ function crypto_encrypt(string $plaintext): string
         return '';
     }
 
+    if (!function_exists('openssl_encrypt')) {
+        throw new RuntimeException('Ekstensi PHP OpenSSL belum aktif di server hosting.');
+    }
+
     $key = crypto_get_key();
     $iv  = random_bytes(12);
     $tag = '';
@@ -77,6 +81,10 @@ function crypto_decrypt(?string $payload): string
         return $payload;
     }
 
+    if (!function_exists('openssl_decrypt')) {
+        return '';
+    }
+
     $decoded = base64_decode(substr($payload, 7), true);
     if ($decoded === false || strlen($decoded) < 28) {
         return '';
@@ -86,14 +94,17 @@ function crypto_decrypt(?string $payload): string
     $tag        = substr($decoded, 12, 16);
     $ciphertext = substr($decoded, 28);
 
-    $plaintext = openssl_decrypt(
-        $ciphertext,
-        CRYPTO_CIPHER,
-        crypto_get_key(),
-        OPENSSL_RAW_DATA,
-        $iv,
-        $tag
-    );
-
-    return $plaintext === false ? '' : $plaintext;
+    try {
+        $plaintext = openssl_decrypt(
+            $ciphertext,
+            CRYPTO_CIPHER,
+            crypto_get_key(),
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag
+        );
+        return $plaintext === false ? '' : $plaintext;
+    } catch (Throwable $e) {
+        return '';
+    }
 }

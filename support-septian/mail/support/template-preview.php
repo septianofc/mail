@@ -7,6 +7,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/gmail-client.php';
 require_once __DIR__ . '/includes/email-renderer.php';
 
 $currentAdmin = require_admin();
@@ -34,9 +35,9 @@ $sampleVars = [
     'isi_pesan'      => 'Tim Support Septian F. R. telah menerima laporan Anda dan melakukan verifikasi pada akun terkait. Berikut detail langkah yang dapat Anda ikuti selanjutnya.',
 ];
 
-$renderedSubject = $activeTpl ? replace_template_variables((string) $activeTpl['subject_template'], $sampleVars, false) : 'Support Septian';
+$renderedSubject = $activeTpl ? replace_template_variables((string) ($activeTpl['subject_template'] ?? ''), $sampleVars, false) : 'Support Septian';
 $renderedHtml    = $activeTpl
-    ? render_professional_email_html((string) $activeTpl['body_html'], $renderedSubject, $sampleVars, true)
+    ? render_professional_email_html((string) ($activeTpl['body_html'] ?? ''), $renderedSubject, $sampleVars, true)
     : '<p>Belum ada template.</p>';
 
 $extraScripts = ['templates.js'];
@@ -66,10 +67,10 @@ require __DIR__ . '/includes/header.php';
             <select id="previewTemplateSelect">
                 <?php foreach ($templates as $t): ?>
                     <option value="<?= (int) $t['id'] ?>"
-                            data-subject="<?= e($t['subject_template']) ?>"
-                            data-body="<?= e($t['body_html']) ?>"
+                            data-subject="<?= e((string) ($t['subject_template'] ?? '')) ?>"
+                            data-body="<?= e((string) ($t['body_html'] ?? '')) ?>"
                             <?= $activeTpl && (int) $t['id'] === (int) $activeTpl['id'] ? 'selected' : '' ?>>
-                        [<?= e(strtoupper($t['category'])) ?>] <?= e($t['name']) ?>
+                        [<?= e(strtoupper((string) ($t['category'] ?? ''))) ?>] <?= e((string) ($t['name'] ?? '')) ?>
                     </option>
                 <?php endforeach; ?>
             </select>

@@ -78,11 +78,11 @@ require __DIR__ . '/includes/header.php';
                     <option value="">-- Pilih Template --</option>
                     <?php foreach ($templatesAll as $t): ?>
                         <option value="<?= (int) $t['id'] ?>"
-                                data-category="<?= e($t['category']) ?>"
-                                data-default="<?= (int) $t['is_default'] ?>"
-                                data-subject="<?= e($t['subject_template']) ?>"
-                                data-body="<?= e($t['body_html']) ?>">
-                            [<?= e(strtoupper($t['category'])) ?>] <?= e($t['name']) ?><?= (int) $t['is_default'] === 1 ? ' (Default)' : '' ?>
+                                data-category="<?= e((string) ($t['category'] ?? '')) ?>"
+                                data-default="<?= (int) ($t['is_default'] ?? 0) ?>"
+                                data-subject="<?= e((string) ($t['subject_template'] ?? '')) ?>"
+                                data-body="<?= e((string) ($t['body_html'] ?? '')) ?>">
+                            [<?= e(strtoupper((string) ($t['category'] ?? ''))) ?>] <?= e((string) ($t['name'] ?? '')) ?><?= (int) ($t['is_default'] ?? 0) === 1 ? ' (Default)' : '' ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
