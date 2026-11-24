@@ -9,7 +9,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/includes/auth.php';
 require_once dirname(__DIR__) . '/includes/gmail-service.php';
 
-$admin = require_admin(true);
+$admin = require_superadmin(true);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['ok' => false, 'message' => 'Metode tidak diizinkan.'], 405);

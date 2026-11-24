@@ -62,7 +62,7 @@ function create_google_oauth_client(): \Google\Client
     }
 
     $client = new \Google\Client();
-    $client->setApplicationName('Support Septian');
+    $client->setApplicationName(get_setting('app_name', DEFAULT_APP_NAME));
     $client->setClientId($clientId);
     $client->setClientSecret($clientSecret);
     $client->setRedirectUri(OAUTH_REDIRECT_URI);
@@ -77,10 +77,10 @@ function create_google_oauth_client(): \Google\Client
 /**
  * Ambil data token OAuth resmi dari database (terdekripsi di memori server saja).
  */
-function get_stored_oauth_token(): ?array
+function get_stored_oauth_token(?string $targetEmail = null): ?array
 {
     try {
-        $officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
+        $officialEmail = strtolower(trim($targetEmail ?: get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
         $stmt = db()->prepare(
             'SELECT * FROM oauth_tokens WHERE provider = :prov AND LOWER(account_email) = LOWER(:email) LIMIT 1'
         );
@@ -89,6 +89,11 @@ function get_stored_oauth_token(): ?array
             ':email' => $officialEmail,
         ]);
         $row = $stmt->fetch();
+        if (!$row) {
+            // Fallback ke token terhubung terbaru jika akun spesifik belum punya baris sendiri
+            $stmtAny = db()->query("SELECT * FROM oauth_tokens WHERE provider = 'google_gmail' ORDER BY id DESC LIMIT 1");
+            $row = $stmtAny ? $stmtAny->fetch() : false;
+        }
         if (!$row) {
             return null;
         }
@@ -290,20 +295,26 @@ function get_authenticated_google_client(): \Google\Client
 }
 
 /**
- * Mengembalikan ringkasan status koneksi email aktif (OAuth 2.0 & Google App Password)
+ * Mengembalikan ringkasan status koneksi email aktif (OAuth 2.0 & App Password / SMTP Mailbox).
  * Aman untuk ditampilkan di UI (tidak pernah mengekspos secret atau token).
  */
-function get_mail_connection_status(): array
+function get_mail_connection_status(?array $mailbox = null): array
 {
-    $mode          = get_setting('mail_connection_mode', 'oauth');
-    $officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
-    $oauthToken    = get_stored_oauth_token();
+    $mb = $mailbox;
+    if ($mb === null && function_exists('get_effective_mailbox')) {
+        $mb = get_effective_mailbox();
+    }
+
+    $mode          = (string) ($mb['provider_mode'] ?? get_setting('mail_connection_mode', 'app_password'));
+    $officialEmail = strtolower(trim((string) ($mb['email'] ?? get_setting('support_email', DEFAULT_OFFICIAL_GMAIL))));
+    $oauthToken    = get_stored_oauth_token($officialEmail);
     $oauthConfigured = trim(get_setting('gmail_oauth_client_id', '')) !== ''
         && trim(get_setting('gmail_oauth_client_secret', '')) !== '';
     $sdkInstalled  = is_google_sdk_installed();
 
-    $appPassEmail  = strtolower(trim(get_setting('gmail_app_password_email', $officialEmail)));
-    $appPassSet    = trim(get_setting('gmail_app_password_secret', '')) !== '';
+    $appPassEmail  = strtolower(trim((string) ($mb['smtp_username'] ?? $officialEmail)));
+    $appPassSecret = trim((string) ($mb['smtp_password'] ?? get_setting('gmail_app_password_secret', '')));
+    $appPassSet    = $appPassSecret !== '';
     $phpmailerInstalled = class_exists(\PHPMailer\PHPMailer\PHPMailer::class);
     $imapAvailable = function_exists('imap_open');
 
@@ -320,15 +331,17 @@ function get_mail_connection_status(): array
             $activeLabel = 'PHPMailer Belum Terpasang';
             $activeBadge = 'warning';
             $notice      = 'Library PHPMailer belum ditemukan di vendor/ maupun includes/phpmailer/. Unggah manual folder src PHPMailer ke includes/phpmailer/src/ atau instal via Composer.';
-        } elseif ($appPassSet && $appPassEmail === $officialEmail) {
+        } elseif ($appPassSet && filter_var($appPassEmail, FILTER_VALIDATE_EMAIL)) {
             $activeReady = true;
-            $activeLabel = 'Terhubung via PHPMailer SMTP Gmail (SSL:465)';
+            $smtpHost    = (string) ($mb['smtp_host'] ?? 'smtp.gmail.com');
+            $smtpPort    = (int) ($mb['smtp_port'] ?? 465);
+            $activeLabel = 'Terhubung via SMTP (' . $smtpHost . ':' . $smtpPort . ')';
             $activeBadge = 'connected';
             if (!$imapAvailable) {
-                $notice = 'PHPMailer SMTP Gmail (smtp.gmail.com:465 SSL) siap mengirim email. Ekstensi PHP IMAP belum aktif di server untuk membaca kotak masuk via App Password (disarankan aktifkan php-imap atau gunakan mode OAuth 2.0).';
+                $notice = 'SMTP siap mengirim email. Ekstensi PHP IMAP belum aktif di server untuk membaca kotak masuk (riwayat Terkirim lokal tetap tercatat penuh).';
             }
         } else {
-            $notice = 'Google App Password belum dikonfigurasi untuk akun resmi ' . $officialEmail . '.';
+            $notice = 'Sandi SMTP / Google App Password belum dikonfigurasi untuk akun ' . $officialEmail . '.';
         }
     } else {
         if ($oauthConnected && $sdkInstalled) {
@@ -338,21 +351,23 @@ function get_mail_connection_status(): array
         } elseif ($oauthRevoked) {
             $activeLabel = 'Token Dicabut — Perlu Hubungkan Ulang';
             $activeBadge = 'revoked';
-            $notice      = (string) ($oauthToken['last_error'] ?: 'Akses OAuth Gmail telah dicabut. Klik Hubungkan Ulang Gmail.');
+            $notice      = (string) ($oauthToken['last_error'] ?: 'Akses OAuth Gmail telah dicabut. Hubungi Superadmin untuk menghubungkan ulang.');
         } elseif (!$sdkInstalled) {
             $activeLabel = 'Google API Client Belum Terpasang';
             $activeBadge = 'warning';
-            $notice      = 'Folder vendor/ (google/apiclient) belum ditemukan. Instal melalui Composer atau gunakan mode Google App Password.';
+            $notice      = 'Folder vendor/ (google/apiclient) belum ditemukan. Instal melalui Composer atau gunakan mode SMTP / App Password.';
         } elseif (!$oauthConfigured) {
             $activeLabel = 'OAuth Client ID/Secret Belum Diisi';
             $activeBadge = 'warning';
-            $notice      = 'Isi Google OAuth Client ID & Client Secret di halaman Pengaturan atau Koneksi Gmail.';
+            $notice      = 'Superadmin perlu mengisi Google OAuth Client ID & Client Secret di halaman Pengaturan / Koneksi Gmail.';
         } else {
-            $notice = 'Klik "Hubungkan Gmail" untuk mengotorisasi ' . $officialEmail . '.';
+            $notice = 'Superadmin perlu mengotorisasi akun ' . $officialEmail . ' di halaman Koneksi Gmail.';
         }
     }
 
     return [
+        'mailbox_id'          => (int) ($mb['id'] ?? 0),
+        'mailbox_label'       => (string) ($mb['label'] ?? $officialEmail),
         'mode'                => $mode,
         'official_email'      => $officialEmail,
         'active_ready'        => $activeReady,

@@ -9,7 +9,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/includes/auth.php';
 require_once dirname(__DIR__) . '/includes/gmail-client.php';
 
-$admin = require_admin();
+$admin = require_superadmin();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     redirect_to('gmail-connection.php');

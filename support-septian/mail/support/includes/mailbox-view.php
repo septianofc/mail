@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — Reusable Mailbox Folder View (Inbox, Sent, Drafts, Starred, Spam, Trash)
+ * Skyzz Mail — Reusable Mailbox Folder View (Inbox, Sent, Drafts, Starred, Spam, Trash)
  */
 
 declare(strict_types=1);
@@ -12,20 +12,24 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === basename(__FILE__)) {
 
 require_once __DIR__ . '/gmail-client.php';
 
+$activeMailbox  = get_effective_mailbox($currentAdmin ?? null);
+$mbEmail        = (string) ($activeMailbox['email'] ?? get_setting('support_email', DEFAULT_OFFICIAL_GMAIL));
+$isSuper        = is_superadmin($currentAdmin ?? null);
 $folderKey      = $folderKey ?? 'inbox';
 $folderTitle    = $folderTitle ?? 'Kotak Masuk';
-$folderSubtitle = $folderSubtitle ?? 'Pesan masuk akun support.septianfr@gmail.com';
+$folderSubtitle = $folderSubtitle ?? ('Akun email aktif: ' . $mbEmail);
 $searchQuery    = trim((string) ($_GET['q'] ?? ''));
+
 try {
-    $connStatus = get_mail_connection_status();
+    $connStatus = get_mail_connection_status($activeMailbox);
 } catch (Throwable $e) {
     app_log('error', 'Mailbox view connection status error: ' . $e->getMessage());
     $connStatus = [
         'active_ready' => false,
-        'notice'       => 'Gagal memuat status koneksi Gmail. Periksa konfigurasi di halaman Koneksi Gmail.',
+        'notice'       => 'Gagal memuat status koneksi email. Periksa konfigurasi koneksi.',
     ];
 }
-$extraScripts   = ['inbox.js'];
+$extraScripts = ['inbox.js'];
 
 require __DIR__ . '/header.php';
 ?>
@@ -48,7 +52,8 @@ require __DIR__ . '/header.php';
          id="mailboxContainer"
          data-folder="<?= e($folderKey) ?>"
          data-query="<?= e($searchQuery) ?>"
-         data-connected="<?= $connStatus['active_ready'] ? '1' : '0' ?>">
+         data-connected="<?= $connStatus['active_ready'] ? '1' : '0' ?>"
+         data-mailbox-id="<?= (int) ($activeMailbox['id'] ?? 0) ?>">
 
     <!-- Mailbox Bulk Toolbar -->
     <div class="mailbox-toolbar">
@@ -89,9 +94,11 @@ require __DIR__ . '/header.php';
     <div id="mailboxList" class="mailbox-list">
         <?php if (!$connStatus['active_ready']): ?>
             <div class="empty-state">
-                <p><strong>Akun Gmail belum terhubung.</strong></p>
-                <p class="muted"><?= e($connStatus['notice'] ?: 'Silakan hubungkan akun support.septianfr@gmail.com di halaman Koneksi Gmail.') ?></p>
-                <a href="<?= e(base_url('gmail-connection.php')) ?>" class="btn btn-primary btn-sm" style="margin-top:12px;">Hubungkan Gmail</a>
+                <p><strong>Akun email belum terhubung.</strong></p>
+                <p class="muted"><?= e($connStatus['notice'] ?: 'Silakan pilih akun email aktif atau hubungi Superadmin untuk menghubungkan akun email.') ?></p>
+                <?php if ($isSuper): ?>
+                    <a href="<?= e(base_url('gmail-connection.php')) ?>" class="btn btn-primary btn-sm" style="margin-top:12px;">Konfigurasi Koneksi Gmail</a>
+                <?php endif; ?>
             </div>
         <?php else: ?>
             <div class="loading-rows">

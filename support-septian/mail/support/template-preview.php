@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — Halaman Preview Template Email (Desktop & Mobile)
+ * Skyzz Mail — Halaman Preview Template Email (Desktop & Mobile)
  * Path: /mail/support/template-preview.php
  */
 
@@ -10,11 +10,15 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/gmail-client.php';
 require_once __DIR__ . '/includes/email-renderer.php';
 
-$currentAdmin = require_admin();
-$pageTitle    = 'Preview Template Email';
-$activePage   = 'template-preview';
+$currentAdmin  = require_admin();
+$isSuper       = is_superadmin($currentAdmin);
+$activeMailbox = get_effective_mailbox($currentAdmin);
+$quota         = get_user_quota_status($currentAdmin);
+$plan          = $quota['plan'];
+$pageTitle     = 'Preview Template Email';
+$activePage    = 'template-preview';
 
-$templates  = get_templates();
+$templates  = get_templates('all', (int) $currentAdmin['id'], $isSuper);
 $selectedId = (int) ($_GET['id'] ?? ($templates[0]['id'] ?? 0));
 $activeTpl  = null;
 foreach ($templates as $t) {
@@ -27,17 +31,33 @@ if (!$activeTpl && !empty($templates)) {
     $activeTpl = $templates[0];
 }
 
+$senderName = trim((string) ($currentAdmin['custom_sender_name'] ?? ''))
+    ?: (trim((string) ($activeMailbox['display_name'] ?? '')) ?: get_setting('official_name', DEFAULT_OFFICIAL_NAME));
+$senderEmail = (string) ($activeMailbox['email'] ?? get_setting('support_email', DEFAULT_OFFICIAL_GMAIL));
+$appName     = get_setting('app_name', DEFAULT_APP_NAME);
+
 $sampleVars = [
     'nama_penerima'  => 'Budi Santoso',
     'email_penerima' => 'budi.santoso@contoh.id',
-    'subjek'         => 'Permintaan Bantuan Aktivasi Layanan',
-    'nama_pengirim'  => $currentAdmin['name'] ?: DEFAULT_OFFICIAL_NAME,
-    'isi_pesan'      => 'Tim Support Septian F. R. telah menerima laporan Anda dan melakukan verifikasi pada akun terkait. Berikut detail langkah yang dapat Anda ikuti selanjutnya.',
+    'subjek'         => 'Konfirmasi Layanan & Bantuan Pelanggan',
+    'nama_pengirim'  => $senderName,
+    'isi_pesan'      => 'Terima kasih telah menghubungi kami. Pesan Anda telah kami terima dan sedang kami proses dengan segera.',
 ];
 
-$renderedSubject = $activeTpl ? replace_template_variables((string) ($activeTpl['subject_template'] ?? ''), $sampleVars, false) : 'Support Septian';
+$watermarkText = (!empty($plan['has_watermark']) && !$isSuper)
+    ? (string) ($plan['watermark_text'] ?: get_setting('free_watermark_text', FREE_WATERMARK_DEFAULT))
+    : '';
+$renderOptions = [
+    'sender_name'    => $senderName,
+    'sender_email'   => $senderEmail,
+    'signature'      => trim((string) ($currentAdmin['custom_signature'] ?? '')) ?: get_setting('email_signature', ''),
+    'footer_note'    => trim((string) ($currentAdmin['custom_footer_note'] ?? '')) ?: get_setting('footer_note', ''),
+    'watermark_text' => $watermarkText,
+];
+
+$renderedSubject = $activeTpl ? replace_template_variables((string) ($activeTpl['subject_template'] ?? ''), $sampleVars, false) : $appName;
 $renderedHtml    = $activeTpl
-    ? render_professional_email_html((string) ($activeTpl['body_html'] ?? ''), $renderedSubject, $sampleVars, true)
+    ? render_professional_email_html((string) ($activeTpl['body_html'] ?? ''), $renderedSubject, $sampleVars, true, '', $renderOptions)
     : '<p>Belum ada template.</p>';
 
 $extraScripts = ['templates.js'];
@@ -47,12 +67,12 @@ require __DIR__ . '/includes/header.php';
 <div class="page-header">
     <div>
         <h1 class="page-title">Preview Template Email</h1>
-        <p class="page-subtitle">Uji tampilan responsif email HTML Support Septian F. R. pada layar Desktop, Android, dan iPhone</p>
+        <p class="page-subtitle">Uji tampilan responsif template email Anda pada layar Desktop, Android Mini, dan iPhone</p>
     </div>
     <div class="page-actions">
         <div class="segmented-control" id="viewportToggle">
             <button type="button" class="seg-btn is-active" data-viewport="desktop">Desktop (600px)</button>
-            <button type="button" class="seg-btn" data-viewport="mobile">Mobile (375px)</button>
+            <button type="button" class="seg-btn" data-viewport="mobile">Mobile (360px)</button>
         </div>
         <a href="<?= e(base_url('templates.php')) ?>" class="btn btn-secondary btn-sm">Kelola Template</a>
     </div>
@@ -101,13 +121,13 @@ require __DIR__ . '/includes/header.php';
 
     <section class="card preview-stage-card">
         <div class="preview-mail-meta">
-            <div><strong>Dari:</strong> <?= e(get_setting('official_name', DEFAULT_OFFICIAL_NAME)) ?> &lt;<?= e(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)) ?>&gt;</div>
+            <div><strong>Dari:</strong> <?= e($senderName) ?> &lt;<?= e($senderEmail) ?>&gt;</div>
             <div><strong>Subjek:</strong> <span id="previewRenderedSubject"><?= e($renderedSubject) ?></span></div>
         </div>
         <div class="preview-stage" id="previewStage">
             <iframe id="standalonePreviewFrame"
                     class="standalone-preview-frame"
-                    title="Preview Email Support Septian"
+                    title="Preview Email <?= e($appName) ?>"
                     sandbox="allow-same-origin"
                     srcdoc="<?= e($renderedHtml) ?>"></iframe>
         </div>

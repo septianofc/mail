@@ -46,12 +46,12 @@ interface EmailTemplateSample {
 const BUILTIN_TEMPLATES: EmailTemplateSample[] = [
   {
     id: 'balasan-standar',
-    name: 'Balasan Standar',
+    name: 'Balasan Standar Kustom',
     category: 'Balas Pesan',
     isDefault: true,
     subject: 'Re: {subjek}',
     bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Terima kasih telah menghubungi <strong>{nama_perusahaan}</strong>.</p><p>{isi_pesan}</p><p>Apabila masih ada pertanyaan atau kendala lain yang dapat kami bantu, silakan balas langsung email ini.</p>',
+      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Terima kasih telah menghubungi <strong>{nama_pengirim}</strong>.</p><p>{isi_pesan}</p><p>Apabila masih ada pertanyaan atau kendala lain yang dapat kami bantu, silakan balas langsung email ini.</p>',
   },
   {
     id: 'konfirmasi-penerimaan',
@@ -60,7 +60,7 @@ const BUILTIN_TEMPLATES: EmailTemplateSample[] = [
     isDefault: false,
     subject: 'Re: {subjek} — Pesan Anda Telah Kami Terima',
     bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Kami mengonfirmasi bahwa pesan Anda dengan subjek <strong>&ldquo;{subjek}&rdquo;</strong> telah kami terima dengan baik pada {tanggal}.</p><p>{isi_pesan}</p><p>Tim Support Septian F. R. akan meninjau permintaan Anda dan segera memberikan tindak lanjut.</p>',
+      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Kami mengonfirmasi bahwa pesan Anda dengan subjek <strong>&ldquo;{subjek}&rdquo;</strong> telah kami terima dengan baik pada {tanggal}.</p><p>{isi_pesan}</p><p>Tim kami akan segera meninjau permintaan Anda dan memberikan tindak lanjut.</p>',
   },
   {
     id: 'sedang-diproses',
@@ -69,52 +69,16 @@ const BUILTIN_TEMPLATES: EmailTemplateSample[] = [
     isDefault: false,
     subject: 'Re: {subjek} — Permintaan Anda Sedang Diproses',
     bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Kami ingin menginformasikan bahwa laporan atau permintaan Anda terkait <strong>&ldquo;{subjek}&rdquo;</strong> saat ini sedang dalam tahap penanganan oleh tim kami.</p><p>{isi_pesan}</p><p>Kami akan segera menghubungi Anda kembali begitu terdapat pembaruan terbaru. Terima kasih atas kesabaran Anda.</p>',
-  },
-  {
-    id: 'permintaan-info',
-    name: 'Permintaan Informasi Tambahan',
-    category: 'Balas Pesan',
-    isDefault: false,
-    subject: 'Re: {subjek} — Mohon Informasi Tambahan',
-    bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Terima kasih telah menghubungi <strong>{nama_perusahaan}</strong>. Untuk mempercepat proses pemeriksaan terkait <strong>&ldquo;{subjek}&rdquo;</strong>, kami memerlukan beberapa informasi tambahan berikut:</p><p>{isi_pesan}</p><p>Silakan balas email ini beserta detail yang dibutuhkan agar kami dapat segera melanjutkan penanganan.</p>',
-  },
-  {
-    id: 'penyelesaian-masalah',
-    name: 'Penyelesaian Masalah',
-    category: 'Balas Semua',
-    isDefault: true,
-    subject: 'Re: {subjek} — Kendala Telah Diselesaikan',
-    bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Kami informasikan bahwa kendala terkait <strong>&ldquo;{subjek}&rdquo;</strong> telah berhasil diselesaikan oleh tim <strong>{nama_perusahaan}</strong>.</p><p>{isi_pesan}</p><p>Mohon lakukan pengecekan kembali di sisi Anda. Jika masih ditemukan kendala, jangan ragu untuk membalas email ini.</p>',
-  },
-  {
-    id: 'ucapan-terima-kasih',
-    name: 'Ucapan Terima Kasih',
-    category: 'Balas Pesan',
-    isDefault: false,
-    subject: 'Re: {subjek} — Terima Kasih',
-    bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Terima kasih atas kepercayaan dan kerja sama Anda bersama <strong>{nama_perusahaan}</strong>.</p><p>{isi_pesan}</p><p>Kami selalu siap membantu Anda kapan pun dibutuhkan melalui {email_support} atau situs web kami di {website}.</p>',
-  },
-  {
-    id: 'balasan-umum-teruskan',
-    name: 'Balasan Umum (Teruskan)',
-    category: 'Teruskan Pesan',
-    isDefault: true,
-    subject: 'Fwd: {subjek}',
-    bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Berikut kami teruskan informasi terkait <strong>&ldquo;{subjek}&rdquo;</strong> dari layanan <strong>{nama_perusahaan}</strong> untuk dapat ditindaklanjuti.</p><p>{isi_pesan}</p><p>Apabila membutuhkan informasi lanjutan, silakan hubungi kami melalui {email_support}.</p>',
+      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Kami informasikan bahwa permintaan Anda terkait <strong>&ldquo;{subjek}&rdquo;</strong> saat ini sedang kami tangani.</p><p>{isi_pesan}</p><p>Kami akan segera menghubungi Anda kembali begitu terdapat pembaruan terbaru.</p>',
   },
   {
     id: 'pesan-baru',
-    name: 'Pesan Baru',
+    name: 'Pesan Baru Kustom',
     category: 'Pesan Baru',
     isDefault: true,
     subject: '{subjek}',
     bodyHtml:
-      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Perkenalkan, kami dari tim resmi <strong>{nama_perusahaan}</strong> menghubungi Anda terkait hal berikut:</p><p>{isi_pesan}</p><p>Jika ada hal yang ingin dikonfirmasi, silakan balas langsung email ini atau kunjungi {website}.</p>',
+      '<p>Halo <strong>{nama_penerima}</strong>,</p><p>Perkenalkan, kami dari <strong>{nama_pengirim}</strong> menghubungi Anda terkait hal berikut:</p><p>{isi_pesan}</p><p>Silakan balas langsung email ini apabila ada informasi yang ingin dikonfirmasi.</p>',
   },
 ];
 
@@ -127,7 +91,7 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function buildOfficialEmailHtml(
+function buildSkyzzEmailHtml(
   tpl: EmailTemplateSample,
   vars: {
     nama_penerima: string;
@@ -135,24 +99,27 @@ function buildOfficialEmailHtml(
     subjek: string;
     nama_pengirim: string;
     isi_pesan: string;
-  }
+  },
+  planMode: 'free' | 'paid'
 ): { subject: string; html: string } {
-  const tanggal = new Intl.DateTimeFormat('id-ID', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date()) + ' WIB';
+  const tanggal =
+    new Intl.DateTimeFormat('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date()) + ' WIB';
 
+  const senderBrand = vars.nama_pengirim.trim() || 'Skyzz Mail';
   const map: Record<string, string> = {
     '{nama_penerima}': escapeHtml(vars.nama_penerima),
     '{email_penerima}': escapeHtml(vars.email_penerima),
     '{subjek}': escapeHtml(vars.subjek),
     '{tanggal}': escapeHtml(tanggal),
-    '{nama_pengirim}': escapeHtml(vars.nama_pengirim),
+    '{nama_pengirim}': escapeHtml(senderBrand),
     '{isi_pesan}': escapeHtml(vars.isi_pesan).replaceAll('\n', '<br>'),
-    '{nama_perusahaan}': 'Support Septian F. R.',
+    '{nama_perusahaan}': escapeHtml(senderBrand),
     '{website}': 'https://septianfr.web.id',
     '{email_support}': 'support.septianfr@gmail.com',
   };
@@ -164,6 +131,11 @@ function buildOfficialEmailHtml(
     body = body.replaceAll(k, v);
   }
 
+  const watermarkRow =
+    planMode === 'free'
+      ? `<tr><td style="padding:12px 30px;background-color:#f1f5f9;border-top:1px solid #e2e8f0;text-align:center;font-size:11.5px;color:#64748b;">Dikirim Menggunakan Aplikasi Skyzz Mail</td></tr>`
+      : '';
+
   const html = `<!DOCTYPE html>
 <html lang="id">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -173,14 +145,13 @@ function buildOfficialEmailHtml(
       <td align="center">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
           <tr>
-            <td style="padding:26px 30px 18px 30px;border-bottom:1px solid #eceff1;background-color:#ffffff;">
+            <td style="padding:24px 30px 18px 30px;border-bottom:1px solid #eceff1;background-color:#ffffff;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
                   <td valign="middle">
-                    <img src="https://septianfr.web.id/logo.png" onerror="this.style.display='none'" alt="Support Septian" width="38" height="38" style="display:inline-block;vertical-align:middle;border-radius:8px;margin-right:10px;">
-                    <span style="display:inline-block;vertical-align:middle;font-size:19px;font-weight:700;color:#111827;">Support Septian</span>
+                    <span style="display:inline-block;vertical-align:middle;font-size:19px;font-weight:700;color:#111827;">${escapeHtml(senderBrand)}</span>
                   </td>
-                  <td align="right" valign="middle" style="font-size:12px;color:#5f6368;">Layanan Resmi</td>
+                  <td align="right" valign="middle" style="font-size:12px;color:#5f6368;">Skyzz Mail</td>
                 </tr>
               </table>
             </td>
@@ -190,30 +161,11 @@ function buildOfficialEmailHtml(
               <div>${body}</div>
               <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e8eaed;font-size:14px;line-height:1.6;color:#3c4043;">
                 <p style="margin:0 0 4px 0;font-weight:600;color:#111827;">Hormat kami,</p>
-                <p style="margin:0 0 2px 0;font-weight:600;color:#1a73e8;">Tim Support Septian F. R.</p>
-                <p style="margin:0;font-size:13px;color:#5f6368;">Layanan Bantuan Resmi Septian F. R.</p>
+                <p style="margin:0;font-weight:600;color:#1a73e8;">${escapeHtml(senderBrand)}</p>
               </div>
             </td>
           </tr>
-          <tr><td style="padding:0 30px;"><hr style="border:0;border-top:1px solid #e8eaed;margin:0;"></td></tr>
-          <tr>
-            <td style="padding:22px 30px 26px 30px;background-color:#fafbfc;font-size:12.5px;line-height:1.65;color:#5f6368;">
-              <div style="margin-bottom:10px;">
-                <strong style="font-size:14px;color:#111827;">Support Septian F. R.</strong>
-              </div>
-              <div style="margin-bottom:8px;color:#3c4043;">
-                Website: <a href="https://septianfr.web.id" target="_blank" style="color:#1a73e8;text-decoration:none;">https://septianfr.web.id</a><br>
-                Email: <a href="mailto:support.septianfr@gmail.com" style="color:#1a73e8;text-decoration:none;">support.septianfr@gmail.com</a>
-              </div>
-              <div style="margin-bottom:10px;color:#5f6368;">
-                <strong style="color:#3c4043;">Alamat:</strong><br>
-                H4GM+4XX, Jl. PUK Muntur, Ranjeng, Kec. Losarang, Kabupaten Indramayu, Jawa Barat 45253
-              </div>
-              <div style="padding-top:10px;border-top:1px solid #e8eaed;font-size:11.5px;color:#80868b;">
-                Email ini dikirim melalui sistem layanan resmi Support Septian F. R. Mohon tidak membagikan informasi sensitif seperti kata sandi melalui email.
-              </div>
-            </td>
-          </tr>
+          ${watermarkRow}
         </table>
       </td>
     </tr>
@@ -237,19 +189,19 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('explorer');
   const [fileFilter, setFileFilter] = useState<FileCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPath, setSelectedPath] = useState<string>('mail/support/oauth/callback.php');
+  const [selectedPath, setSelectedPath] = useState<string>('mail/support/includes/saas.php');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Template Preview state
   const [selectedTplId, setSelectedTplId] = useState<string>(BUILTIN_TEMPLATES[0].id);
   const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop');
+  const [planMode, setPlanMode] = useState<'free' | 'paid'>('free');
   const [simVars, setSimVars] = useState({
     nama_penerima: 'Budi Santoso',
     email_penerima: 'budi.santoso@contoh.id',
-    subjek: 'Konfirmasi Status Layanan Website',
-    nama_pengirim: 'Septian F. R.',
+    subjek: 'Konfirmasi Pesanan & Pengiriman',
+    nama_pengirim: 'Tim CS Toko Nusantara',
     isi_pesan:
-      'Tim Support Septian F. R. telah menerima pesan Anda dan melakukan pemeriksaan menyeluruh. Seluruh pengaturan akun telah aktif dan dapat digunakan kembali.',
+      'Pesanan Anda telah berhasil kami verifikasi dan segera diproses hari ini. Anda bebas mengganti nama pengirim, isi template, dan tanda tangan sesuai brand Anda.',
   });
 
   const filteredFiles = useMemo(() => {
@@ -271,7 +223,6 @@ export default function App() {
           file.name === '.htaccess'
         );
       }
-      // pages
       return (
         file.path.startsWith('mail/support/') &&
         file.path.endsWith('.php') &&
@@ -291,8 +242,8 @@ export default function App() {
   );
 
   const renderedPreview = useMemo(
-    () => buildOfficialEmailHtml(selectedTemplate, simVars),
-    [selectedTemplate, simVars]
+    () => buildSkyzzEmailHtml(selectedTemplate, simVars, planMode),
+    [selectedTemplate, simVars, planMode]
   );
 
   const handleCopy = async (text: string, id: string) => {
@@ -301,14 +252,14 @@ export default function App() {
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     } catch {
-      // Fallback jika clipboard diblokir browser
+      // Abaikan jika clipboard diblokir browser
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-      {/* Top Bar — 3 Zones */}
-      <header className="sticky top-0 z-30 h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between gap-8">
+      {/* Top Bar */}
+      <header className="sticky top-0 z-30 h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between gap-6">
         <a
           href="#top"
           onClick={(e) => {
@@ -317,7 +268,7 @@ export default function App() {
           }}
           className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
         >
-          Support Septian
+          Skyzz Mail
         </a>
 
         <nav className="flex items-center gap-6 text-sm font-medium text-slate-600 overflow-x-auto">
@@ -341,7 +292,7 @@ export default function App() {
                 : 'border-transparent hover:text-slate-900'
             }`}
           >
-            Preview Template Email
+            Preview Template &amp; Watermark
           </button>
           <button
             type="button"
@@ -352,14 +303,14 @@ export default function App() {
                 : 'border-transparent hover:text-slate-900'
             }`}
           >
-            Deploy &amp; Gmail Setup
+            Deploy, SaaS &amp; API Setup
           </button>
         </nav>
 
         <div className="shrink-0">
           <a
             href={manifest.zipUrl}
-            download="support-septian.zip"
+            download="skyzz-mail.zip"
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors whitespace-nowrap shrink-0"
           >
             <Download className="w-4 h-4" />
@@ -373,10 +324,10 @@ export default function App() {
         <div className="max-w-[1400px] mx-auto flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Paket Source Code PHP 8.1+ &amp; MySQL PDO — Support Septian F. R.
+              Skyzz Mail — Platform Email Multi-User, API Kirim Email &amp; QRIS (PHP 8.1+ / MySQL PDO)
             </h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              HTML5 · CSS3 · JavaScript Vanilla · PHP 8.1+ · MySQL PDO · Google Gmail API (OAuth 2.0) · Google App Password (SMTP/IMAP)
+              HTML5 · CSS3 · Vanilla JS · PHP 8.1+ · MySQL PDO · Sinkron Terkirim Gmail · Superadmin &amp; User · Paket Free/Lite/Pro/Business · 8 Dokumen Legal Play Console · Hapus Akun
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-6 text-sm tabular-nums">
@@ -396,8 +347,8 @@ export default function App() {
             </div>
             <div className="h-7 w-px bg-slate-200" />
             <div>
-              <div className="text-xs text-slate-500">Base Path Produksi</div>
-              <div className="font-mono text-xs font-semibold text-blue-700">/mail/support</div>
+              <div className="text-xs text-slate-500">REST API Endpoint</div>
+              <div className="font-mono text-xs font-semibold text-blue-700">/mail/support/api/v1/send.php</div>
             </div>
           </div>
         </div>
@@ -416,7 +367,7 @@ export default function App() {
                     type="search"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Cari file (mis. callback.php, database.sql)..."
+                    placeholder="Cari file (mis. saas.php, billing.php, legal.php)..."
                     className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-600 focus:bg-white"
                   />
                 </div>
@@ -490,7 +441,7 @@ export default function App() {
                     <div className="flex items-center gap-2 min-w-0">
                       <FolderOpen className="w-4 h-4 text-blue-600 shrink-0" />
                       <span className="font-mono text-sm font-semibold text-slate-900 truncate">
-                        support-septian/{activeFile.path}
+                        skyzz-mail/{activeFile.path}
                       </span>
                     </div>
                     <div className="flex items-center gap-4 text-xs text-slate-500 tabular-nums">
@@ -520,10 +471,10 @@ export default function App() {
 
                   {activeFile.binary ? (
                     <div className="p-12 text-center">
-                      <p className="text-sm font-semibold text-slate-900">Aset Gambar PNG Biner</p>
+                      <p className="text-sm font-semibold text-slate-900">Aset Gambar Biner</p>
                       <p className="text-xs text-slate-500 mt-1">
                         File <code>{activeFile.path}</code> ({formatBytes(activeFile.size)}) sudah termasuk di dalam paket{' '}
-                        <code>support-septian.zip</code>.
+                        <code>skyzz-mail.zip</code>.
                       </p>
                     </div>
                   ) : (
@@ -544,17 +495,42 @@ export default function App() {
             {/* Controls */}
             <section className="lg:col-span-4 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
               <div>
-                <h2 className="text-base font-bold text-slate-900">Simulator Template Email Resmi</h2>
+                <h2 className="text-base font-bold text-slate-900">Simulator Template Kustom &amp; Watermark</h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  Desain inline CSS bergaya Google (lebar maks. 600px, background putih, responsif Android/iPhone) yang dihasilkan oleh{' '}
-                  <code>email-renderer.php</code>.
+                  User bebas mengganti nama pengirim dan template sendiri. Paket Free menyertakan watermark kecil, sedangkan paket Lite/Pro/Business bebas watermark.
                 </p>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                  Pilih Template (8 Template Awal)
-                </label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">Simulasi Paket</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPlanMode('free')}
+                    className={`px-3 py-2 text-xs font-semibold rounded-lg border cursor-pointer ${
+                      planMode === 'free'
+                        ? 'bg-blue-50 border-blue-600 text-blue-700'
+                        : 'bg-white border-slate-300 text-slate-600'
+                    }`}
+                  >
+                    Free (Ada Watermark)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlanMode('paid')}
+                    className={`px-3 py-2 text-xs font-semibold rounded-lg border cursor-pointer ${
+                      planMode === 'paid'
+                        ? 'bg-blue-50 border-blue-600 text-blue-700'
+                        : 'bg-white border-slate-300 text-slate-600'
+                    }`}
+                  >
+                    Lite / Pro / Business
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">Pilih Template</label>
                 <select
                   value={selectedTplId}
                   onChange={(e) => setSelectedTplId(e.target.value)}
@@ -563,10 +539,19 @@ export default function App() {
                   {BUILTIN_TEMPLATES.map((tpl) => (
                     <option key={tpl.id} value={tpl.id}>
                       [{tpl.category}] {tpl.name}
-                      {tpl.isDefault ? ' (Default)' : ''}
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nama Pengirim Kustom</label>
+                <input
+                  type="text"
+                  value={simVars.nama_pengirim}
+                  onChange={(e) => setSimVars((s) => ({ ...s, nama_pengirim: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
+                />
               </div>
 
               <div>
@@ -575,16 +560,6 @@ export default function App() {
                   type="text"
                   value={simVars.nama_penerima}
                   onChange={(e) => setSimVars((s) => ({ ...s, nama_penerima: e.target.value }))}
-                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">{'{email_penerima}'}</label>
-                <input
-                  type="email"
-                  value={simVars.email_penerima}
-                  onChange={(e) => setSimVars((s) => ({ ...s, email_penerima: e.target.value }))}
                   className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:border-blue-600"
                 />
               </div>
@@ -633,7 +608,7 @@ export default function App() {
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-200">
                 <div className="text-sm space-y-0.5">
                   <div className="text-slate-600">
-                    <strong className="text-slate-900">Dari:</strong> Support Septian F. R. &lt;support.septianfr@gmail.com&gt;
+                    <strong className="text-slate-900">Dari:</strong> {simVars.nama_pengirim} &lt;akun-pilihan@gmail.com&gt;
                   </div>
                   <div className="text-slate-600">
                     <strong className="text-slate-900">Subjek:</strong> {renderedPreview.subject}
@@ -658,18 +633,18 @@ export default function App() {
                     }`}
                   >
                     <Smartphone className="w-3.5 h-3.5" />
-                    <span>Mobile (375px)</span>
+                    <span>Android Mini (360px)</span>
                   </button>
                 </div>
               </div>
 
               <div className="bg-slate-100 rounded-xl p-5 flex justify-center overflow-x-auto">
                 <iframe
-                  title="Preview Template Email Support Septian"
+                  title="Preview Template Email Skyzz Mail"
                   srcDoc={renderedPreview.html}
                   sandbox="allow-same-origin"
-                  className={`bg-white border border-slate-200 rounded-lg h-[720px] transition-all ${
-                    viewport === 'mobile' ? 'w-[375px]' : 'w-full max-w-[660px]'
+                  className={`bg-white border border-slate-200 rounded-lg h-[660px] transition-all ${
+                    viewport === 'mobile' ? 'w-[360px]' : 'w-full max-w-[660px]'
                   }`}
                 />
               </div>
@@ -679,97 +654,57 @@ export default function App() {
 
         {activeTab === 'deploy' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Google OAuth 2.0 Spec */}
+            {/* SaaS & API Specs */}
             <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
               <div className="flex items-center gap-2.5">
                 <Mail className="w-5 h-5 text-blue-600" />
                 <h2 className="text-base font-bold text-slate-900">
-                  1. Konfigurasi Google Gmail API (OAuth 2.0 Web Application)
+                  1. Ringkasan Paket, Limit Harian &amp; REST API v1
                 </h2>
               </div>
-              <p className="text-sm text-slate-600">
-                Masukkan konfigurasi berikut pada Google Cloud Console &rarr; APIs &amp; Services &rarr; Credentials:
-              </p>
 
               <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg bg-slate-50 px-4 text-sm">
                 {[
-                  ['Akun Gmail Resmi', 'support.septianfr@gmail.com'],
-                  ['Authorized JavaScript Origin', 'https://septianfr.web.id'],
-                  ['Authorized Redirect URI (Wajib)', 'https://septianfr.web.id/mail/support/oauth/callback.php'],
-                  ['Scope 1', 'https://www.googleapis.com/auth/gmail.readonly'],
-                  ['Scope 2', 'https://www.googleapis.com/auth/gmail.send'],
-                  ['Scope 3', 'https://www.googleapis.com/auth/gmail.modify'],
+                  ['Free (Rp 0 / Selamanya)', '10 kirim/hari · Terima Tanpa Batas · API Aktif · Ada Watermark'],
+                  ['Lite (Rp 5.000 / Bulan)', '50 kirim/hari · Terima Tanpa Batas · API Aktif · Bebas Watermark'],
+                  ['Pro (Rp 10.000 / Bulan)', '100 kirim/hari · Terima Tanpa Batas · API Aktif · Bebas Watermark'],
+                  ['Business (Rp 20.000 / Bulan)', '200 kirim/hari · Terima Tanpa Batas · API Aktif · Bebas Watermark'],
+                  ['Durasi Pembelian Paket', '1 bulan s/d 12 bulan (maks. 1 tahun) via QRIS All Payment'],
+                  ['Kegagalan Kirim', 'Limit harian TIDAK berkurang apabila pengiriman gagal'],
+                  ['Endpoint API Kirim Email', 'POST /mail/support/api/v1/send.php (Bearer / X-API-Key)'],
+                  ['Sinkronisasi Terkirim Gmail', 'Otomatis via IMAP APPEND (cek anti-duplikat Message-ID) + log lokal'],
                 ].map(([label, val]) => (
-                  <div key={label} className="py-2.5 flex items-center justify-between gap-3">
-                    <span className="text-xs font-medium text-slate-500">{label}</span>
-                    <div className="flex items-center gap-2 min-w-0">
-                      <code className="text-xs text-slate-900 truncate">{val}</code>
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(val, label)}
-                        className="text-slate-400 hover:text-blue-600 cursor-pointer shrink-0"
-                        title="Salin"
-                      >
-                        {copiedId === label ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
+                  <div key={label} className="py-2.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <span className="text-xs font-semibold text-slate-700">{label}</span>
+                    <span className="text-xs text-slate-600">{val}</span>
                   </div>
                 ))}
               </div>
-
-              <div className="pt-2">
-                <h3 className="text-sm font-bold text-slate-900 mb-2">
-                  2. Alternatif Google App Password (PHPMailer SMTP SSL:465 + IMAP)
-                </h3>
-                <p className="text-sm text-slate-600 leading-relaxed">
-                  Tersedia di <code>install.php</code> dan <code>gmail-connection.php</code> dengan{' '}
-                  <strong>PHPMailer</strong> ke <code>smtp.gmail.com:465</code> (SSL, <code>SMTPAuth=true</code>) dan
-                  pengirim resmi terkunci ke <code>Support Septian F. R. &lt;support.septianfr@gmail.com&gt;</code> agar DKIM
-                  Google valid (<code>DKIM=PASS</code>). Aktifkan <strong>2-Step Verification</strong>, buat 16-digit{' '}
-                  <strong>App Password</strong>, simpan, jalankan <strong>Diagnostik SMTP</strong>, lalu uji dengan tombol{' '}
-                  <strong>Kirim 1 Email Tes</strong>.
-                </p>
-              </div>
             </section>
 
-            {/* Deployment & Security Checklist */}
+            {/* Deployment & Upgrade Steps */}
             <section className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
               <div className="flex items-center gap-2.5">
                 <ShieldCheck className="w-5 h-5 text-blue-600" />
-                <h2 className="text-base font-bold text-slate-900">Langkah Pemasangan di Hosting PHP (cPanel)</h2>
+                <h2 className="text-base font-bold text-slate-900">2. Langkah Upload Manual &amp; Upgrade di Hosting</h2>
               </div>
 
               <ol className="list-decimal list-inside space-y-3 text-sm text-slate-700 leading-relaxed">
                 <li>
-                  <strong>Unduh &amp; Ekstrak ZIP:</strong> Klik tombol <strong>Unduh ZIP</strong> di kanan atas, lalu ekstrak folder{' '}
-                  <code>support-septian/</code>.
+                  <strong>Unduh &amp; Ekstrak ZIP:</strong> Unduh <code>skyzz-mail.zip</code> lalu unggah isi folder{' '}
+                  <code>mail/support/</code> ke <code>public_html/mail/support/</code>.
                 </li>
                 <li>
-                  <strong>Instal Google API PHP Client &amp; PHPMailer:</strong> Jalankan perintah berikut di root folder{' '}
-                  <code>support-septian/</code> agar folder <code>mail/support/vendor/</code> terbentuk:
-                  <div className="mt-1.5 flex items-center justify-between gap-2 bg-slate-950 text-slate-100 rounded-lg px-3 py-2 font-mono text-xs">
-                    <span>composer install --no-dev --optimize-autoloader</span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopy('composer install --no-dev --optimize-autoloader', 'composer-cmd')}
-                      className="text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      {copiedId === 'composer-cmd' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
+                  <strong>Upgrade Database Otomatis:</strong> Jika Anda sudah memiliki instalasi lama, tidak perlu menghapus database! Saat dibuka pertama kali, <code>ensure_skyzz_schema()</code> otomatis menambahkan tabel baru (<code>mailboxes</code>, <code>packages</code>, <code>payment_orders</code>, <code>user_api_keys</code>, <code>sent_email_logs</code>) dan kolom baru tanpa merusak data lama.
                 </li>
                 <li>
-                  <strong>Unggah ke Hosting:</strong> Unggah seluruh isi <code>mail/support/</code> (termasuk folder{' '}
-                  <code>vendor/</code>) ke <code>public_html/mail/support/</code>.
+                  <strong>PHPMailer (Manual / Composer):</strong> Pastikan folder <code>includes/phpmailer/src/</code> atau <code>vendor/</code> tetap tersedia untuk pengiriman SMTP SSL:465 &amp; pencatatan folder Terkirim Gmail.
                 </li>
                 <li>
-                  <strong>Jalankan Installer Web:</strong> Buka{' '}
-                  <code>https://septianfr.web.id/mail/support/install.php</code> untuk menghubungkan MySQL PDO, mengimpor skema tabel +
-                  8 template profesional awal, membuat akun admin, dan mengisi kredensial OAuth / App Password.
+                  <strong>Konfigurasi Superadmin:</strong> Masuk sebagai Superadmin lalu atur daftar email di <strong>Kelola Akun Email</strong> (<code>mailboxes.php</code>), unggah gambar QRIS di <strong>Paket &amp; QRIS</strong> (<code>admin-packages.php</code>), dan konfirmasi bukti transfer di <strong>Konfirmasi QRIS</strong> (<code>admin-payments.php</code>).
                 </li>
                 <li>
-                  <strong>Hardening Pasca-Instalasi:</strong> Hapus <code>install.php</code> &amp; <code>database.sql</code>, dan
-                  pindahkan <code>storage/app-config.php</code> ke <code>~/support-septian-private/config.php</code> (chmod 0600).
+                  <strong>Dokumen Legal &amp; Google Play Console:</strong> Seluruh 8 dokumen legal dapat diakses publik di <code>/mail/support/legal.php</code> dan tombol <strong>Hapus Akun</strong> tersedia di Desktop &amp; HP Android Mini (<code>delete-account.php</code>).
                 </li>
               </ol>
             </section>

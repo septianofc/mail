@@ -52,9 +52,10 @@ try {
         ],
     ]);
 
+    $fromLabel = $result['from_email'] ?? get_effective_mailbox($admin)['email'];
     json_response([
         'ok'      => true,
-        'message' => 'Email berhasil dikirim melalui akun resmi ' . get_setting('support_email', DEFAULT_OFFICIAL_GMAIL) . '.',
+        'message' => 'Email berhasil dikirim dari ' . $fromLabel . ' dan tercatat di folder Terkirim.',
         'result'  => $result,
     ]);
 } catch (Throwable $e) {

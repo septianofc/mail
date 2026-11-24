@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — Detail Email & Percakapan Thread + Editor Reply / Reply All / Forward
+ * Skyzz Mail — Detail Email & Percakapan Thread + Editor Reply / Reply All / Forward
  * Path: /mail/support/view-email.php?id=...
  */
 
@@ -9,9 +9,11 @@ declare(strict_types=1);
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/gmail-service.php';
 
-$currentAdmin = require_admin();
-$messageId    = trim((string) ($_GET['id'] ?? ''));
-$fromFolder   = trim((string) ($_GET['folder'] ?? 'inbox'));
+$currentAdmin  = require_admin();
+$isSuper       = is_superadmin($currentAdmin);
+$activeMailbox = get_effective_mailbox($currentAdmin);
+$messageId     = trim((string) ($_GET['id'] ?? ''));
+$fromFolder    = trim((string) ($_GET['folder'] ?? 'inbox'));
 
 if ($messageId === '') {
     set_flash('warning', 'ID email tidak ditemukan.');
@@ -25,13 +27,13 @@ $threadData = null;
 $loadError  = '';
 
 try {
-    $threadData = mail_get_thread_detail($messageId, true);
+    $threadData = mail_get_thread_detail($messageId, true, $activeMailbox);
     $pageTitle  = $threadData['subject'] ?: 'Detail Email';
 } catch (Throwable $e) {
     $loadError = $e->getMessage();
 }
 
-$templatesAll = get_templates();
+$templatesAll = get_templates('all', (int) $currentAdmin['id'], $isSuper);
 $templatesByCat = [
     'reply'     => [],
     'reply_all' => [],
@@ -46,12 +48,15 @@ foreach ($templatesAll as $t) {
     }
 }
 
-$officialEmail = strtolower(trim(get_setting('support_email', DEFAULT_OFFICIAL_GMAIL)));
+$officialEmail = strtolower(trim((string) ($activeMailbox['email'] ?? get_setting('support_email', DEFAULT_OFFICIAL_GMAIL))));
+$senderName    = trim((string) ($currentAdmin['custom_sender_name'] ?? ''))
+    ?: (trim((string) ($activeMailbox['display_name'] ?? '')) ?: get_setting('official_name', DEFAULT_OFFICIAL_NAME));
+$appName       = get_setting('app_name', DEFAULT_APP_NAME);
 $lastMsg       = $threadData && !empty($threadData['messages']) ? end($threadData['messages']) : null;
 
 // Siapkan penerima Reply & Reply All
 $replyToEmail = '';
-$replyToName  = 'Pelanggan';
+$replyToName  = 'Penerima';
 $replyAllTo   = '';
 $replyAllCc   = '';
 
@@ -189,7 +194,7 @@ require __DIR__ . '/includes/header.php';
                   data-reply-all-to="<?= e($replyAllTo) ?>"
                   data-reply-all-cc="<?= e($replyAllCc) ?>"
                   data-orig-subject="<?= e($threadData['subject']) ?>"
-                  data-admin-name="<?= e($currentAdmin['name']) ?>">
+                  data-admin-name="<?= e($senderName) ?>">
 
                 <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="thread_id" value="<?= e($threadData['thread_id']) ?>">
@@ -215,7 +220,7 @@ require __DIR__ . '/includes/header.php';
                         <input type="text" id="editorSubject" name="subject" value="<?= e(preg_match('/^re:/i', (string) ($threadData['subject'] ?? '')) ? (string) ($threadData['subject'] ?? '') : 'Re: ' . (string) ($threadData['subject'] ?? '')) ?>" required>
                     </div>
                     <div class="form-group">
-                        <label for="templateSelector">Pilih Template Profesional</label>
+                        <label for="templateSelector">Pilih Template Email</label>
                         <select id="templateSelector">
                             <option value="">-- Muat Template --</option>
                             <?php foreach ($templatesAll as $t): ?>
@@ -261,7 +266,7 @@ require __DIR__ . '/includes/header.php';
                         <button type="button" class="btn btn-secondary" id="btnSaveDraft">Simpan ke Draft</button>
                     </div>
                     <div class="editor-identity-note">
-                        Mengirim sebagai <strong><?= e(get_setting('official_name', DEFAULT_OFFICIAL_NAME)) ?></strong> &lt;<?= e($officialEmail) ?>&gt;
+                        Mengirim sebagai <strong><?= e($senderName) ?></strong> &lt;<?= e($officialEmail) ?>&gt;
                     </div>
                 </div>
             </form>
@@ -271,7 +276,7 @@ require __DIR__ . '/includes/header.php';
         <div class="modal-backdrop" id="emailPreviewModal" hidden>
             <div class="modal-dialog modal-lg" role="dialog" aria-modal="true">
                 <div class="modal-header">
-                    <h3>Preview Tampilan Email Support Septian</h3>
+                    <h3>Preview Tampilan Email <?= e($appName) ?></h3>
                     <button type="button" class="icon-btn" id="closePreviewModal">&times;</button>
                 </div>
                 <div class="modal-body" style="padding:0;">

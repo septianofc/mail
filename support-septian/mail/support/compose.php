@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — Tulis Email Baru (Compose)
+ * Skyzz Mail — Tulis Email Baru (Compose)
  * Path: /mail/support/compose.php
  */
 
@@ -10,11 +10,18 @@ require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/gmail-service.php';
 
 $currentAdmin  = require_admin();
+$isSuper       = is_superadmin($currentAdmin);
 $pageTitle     = 'Tulis Email Baru';
 $activePage    = 'compose';
-$templatesAll  = get_templates();
-$officialEmail = get_setting('support_email', DEFAULT_OFFICIAL_GMAIL);
+$templatesAll  = get_templates('all', (int) $currentAdmin['id'], $isSuper);
+$activeMailbox = get_effective_mailbox($currentAdmin);
+$quota         = get_user_quota_status($currentAdmin);
+$plan          = $quota['plan'];
+$officialEmail = (string) ($activeMailbox['email'] ?? get_setting('support_email', DEFAULT_OFFICIAL_GMAIL));
+$senderName    = trim((string) ($currentAdmin['custom_sender_name'] ?? ''))
+    ?: (trim((string) ($activeMailbox['display_name'] ?? '')) ?: get_setting('official_name', DEFAULT_OFFICIAL_NAME));
 $variables     = get_template_variables_catalog();
+$appName       = get_setting('app_name', DEFAULT_APP_NAME);
 
 $prefillTo      = trim((string) ($_GET['to'] ?? ''));
 $prefillSubject = trim((string) ($_GET['subject'] ?? ''));
@@ -27,12 +34,23 @@ require __DIR__ . '/includes/header.php';
 <div class="page-header">
     <div>
         <h1 class="page-title">Tulis Email Baru</h1>
-        <p class="page-subtitle">Template profesional Support Septian F. R. dimuat otomatis dan dapat diedit sebelum dikirim</p>
+        <p class="page-subtitle">Gunakan template kustom Anda atau tulis bebas &middot; Sisa kuota kirim hari ini: <strong class="tabular-nums"><?= !empty($quota['is_unlimited']) ? 'Tanpa Batas' : ((int) $quota['remaining'] . ' / ' . (int) $quota['daily_limit']) ?></strong> (Paket <?= e((string) ($plan['name'] ?? 'Free')) ?>)</p>
     </div>
     <div class="page-actions">
         <a href="<?= e(base_url('templates.php')) ?>" class="btn btn-secondary btn-sm">Kelola Template</a>
+        <a href="<?= e(base_url('billing.php')) ?>" class="btn btn-secondary btn-sm">Upgrade Kuota</a>
     </div>
 </div>
+
+<?php if (empty($quota['is_unlimited']) && $quota['remaining'] <= 0 && !$isSuper): ?>
+    <div class="alert alert-warning" style="margin-bottom:16px;">
+        <span>Kuota kirim harian Anda hari ini (<?= (int) $quota['daily_limit'] ?> email) telah habis. Kuota akan direset otomatis pukul 00:00 WIB atau <a href="<?= e(base_url('billing.php')) ?>"><strong>upgrade paket Anda sekarang</strong></a>.</span>
+    </div>
+<?php elseif (!empty($plan['has_watermark']) && !$isSuper): ?>
+    <div class="alert alert-info" style="margin-bottom:16px;">
+        <span>Paket <strong><?= e((string) ($plan['name'] ?? 'Free')) ?></strong> menyertakan watermark kecil <em>"<?= e((string) ($plan['watermark_text'] ?: get_setting('free_watermark_text', FREE_WATERMARK_DEFAULT))) ?>"</em>. Pengiriman gagal tidak akan mengurangi limit harian Anda.</span>
+    </div>
+<?php endif; ?>
 
 <section class="card">
     <form id="emailEditorForm"
@@ -40,7 +58,7 @@ require __DIR__ . '/includes/header.php';
           enctype="multipart/form-data"
           data-mode="compose"
           data-endpoint="<?= e(base_url('api/send.php')) ?>"
-          data-admin-name="<?= e($currentAdmin['name']) ?>">
+          data-admin-name="<?= e($senderName) ?>">
 
         <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
         <input type="hidden" name="draft_id" id="draftIdInput" value="<?= e($prefillDraftId) ?>">
@@ -73,7 +91,7 @@ require __DIR__ . '/includes/header.php';
                 <input type="text" id="editorSubject" name="subject" value="<?= e($prefillSubject) ?>" placeholder="Masukkan subjek email" required>
             </div>
             <div class="form-group">
-                <label for="templateSelector">Template Email</label>
+                <label for="templateSelector">Template Email Kustom</label>
                 <select id="templateSelector">
                     <option value="">-- Pilih Template --</option>
                     <?php foreach ($templatesAll as $t): ?>
@@ -111,7 +129,7 @@ require __DIR__ . '/includes/header.php';
             <div class="toolbar-btn-group">
                 <label class="inline-check">
                     <input type="checkbox" name="wrap_template" id="wrapTemplateCheck" value="1" checked>
-                    <span>Gunakan Desain Header &amp; Footer Resmi Support Septian</span>
+                    <span>Gunakan Tata Letak Email Rapi (Header &amp; Tanda Tangan)</span>
                 </label>
                 <button type="button" class="btn btn-secondary btn-sm" id="btnPreviewEmail">Preview Email</button>
             </div>
@@ -132,7 +150,7 @@ require __DIR__ . '/includes/header.php';
                 <button type="button" class="btn btn-secondary" id="btnSaveDraft">Simpan sebagai Draft</button>
             </div>
             <div class="editor-identity-note">
-                Pengirim resmi: <strong><?= e(get_setting('official_name', DEFAULT_OFFICIAL_NAME)) ?></strong> &lt;<?= e($officialEmail) ?>&gt;
+                Pengirim aktif: <strong><?= e($senderName) ?></strong> &lt;<?= e($officialEmail) ?>&gt;
             </div>
         </div>
     </form>
@@ -142,7 +160,7 @@ require __DIR__ . '/includes/header.php';
 <div class="modal-backdrop" id="emailPreviewModal" hidden>
     <div class="modal-dialog modal-lg" role="dialog" aria-modal="true">
         <div class="modal-header">
-            <h3>Preview Desain Email Support Septian F. R.</h3>
+            <h3>Preview Desain Email <?= e($appName) ?></h3>
             <button type="button" class="icon-btn" id="closePreviewModal">&times;</button>
         </div>
         <div class="modal-body" style="padding:0;">

@@ -1,5 +1,5 @@
 /**
- * Support Septian — Core Frontend Utilities (Vanilla JavaScript)
+ * Skyzz Mail — Core Frontend Utilities & Mailbox Switcher (Vanilla JavaScript)
  * Path: /mail/support/assets/js/app.js
  */
 
@@ -11,6 +11,7 @@
 
     const BASE_PATH = baseMeta ? baseMeta.getAttribute('content').replace(/\/$/, '') : '/mail/support';
     const CSRF_TOKEN = csrfMeta ? csrfMeta.getAttribute('content') : '';
+    const CACHE_PREFIX = 'skyzz_mail_cache_';
 
     function buildUrl(relativePath) {
         const clean = String(relativePath || '').replace(/^\/+/, '');
@@ -37,6 +38,21 @@
             el.style.transition = 'opacity 0.2s ease';
             setTimeout(() => el.remove(), 220);
         }, duration);
+    }
+
+    function clearClientCache() {
+        try {
+            const keysToRemove = [];
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const k = sessionStorage.key(i);
+                if (k && k.startsWith(CACHE_PREFIX)) {
+                    keysToRemove.push(k);
+                }
+            }
+            keysToRemove.forEach((k) => sessionStorage.removeItem(k));
+        } catch (e) {
+            // Abaikan jika sessionStorage dinonaktifkan browser
+        }
     }
 
     function confirmModal({ title = 'Konfirmasi', body = 'Apakah Anda yakin?', okText = 'Ya, Lanjutkan', danger = false }) {
@@ -132,7 +148,7 @@
         return data;
     }
 
-    // Mobile Sidebar Drawer
+    // Mobile Sidebar Drawer, Mailbox Switcher & Logout Cache Cleanup
     document.addEventListener('DOMContentLoaded', () => {
         const menuBtn  = document.getElementById('mobileMenuBtn');
         const sidebar  = document.getElementById('appSidebar');
@@ -150,17 +166,52 @@
             });
             backdrop.addEventListener('click', closeDrawer);
         }
+
+        // Pemilih akun email sewaan di header
+        const mbSelect = document.getElementById('headerMailboxSwitcher');
+        if (mbSelect) {
+            mbSelect.addEventListener('change', async () => {
+                const mailboxId = parseInt(mbSelect.value, 10);
+                if (!mailboxId) return;
+                mbSelect.disabled = true;
+                try {
+                    const res = await apiPost('api/switch-mailbox.php', { mailbox_id: mailboxId });
+                    clearClientCache();
+                    showToast(res.message || 'Akun email aktif berhasil diganti.', 'success', 1500);
+                    setTimeout(() => window.location.reload(), 300);
+                } catch (err) {
+                    showToast(err.message || 'Gagal mengganti akun email.', 'error');
+                    mbSelect.disabled = false;
+                }
+            });
+        }
+
+        // Bersihkan cache klien saat logout
+        const logoutForm = document.getElementById('logoutForm');
+        if (logoutForm) {
+            logoutForm.addEventListener('submit', () => {
+                clearClientCache();
+            });
+        }
     });
 
     window.SupportApp = {
         BASE_PATH,
         CSRF_TOKEN,
+        CACHE_PREFIX,
         buildUrl,
         escapeHtml,
         showToast,
+        clearClientCache,
         confirmModal,
         apiGet,
         apiPost,
         apiPostForm
+    };
+
+    window.SS = {
+        toast: showToast,
+        escapeHtml,
+        clearCache: clearClientCache
     };
 })();

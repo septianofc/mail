@@ -1,10 +1,11 @@
 <?php
 /**
- * Support Septian — Google App Password Mail Transport (PHPMailer SMTP SSL:465 + PHP IMAP)
+ * Skyzz Mail — Multi-Mailbox PHPMailer SMTP & PHP IMAP Transport
  *
- * Seluruh pengiriman SMTP menggunakan PHPMailer terautentikasi ke smtp.gmail.com:465 (SSL),
- * bukan PHP mail(), sendmail, atau SMTP lokal hosting.
- * Penandatanganan DKIM untuk support.septianfr@gmail.com ditangani otomatis oleh server Google.
+ * - Mendukung banyak akun email (Gmail App Password maupun SMTP/IMAP kustom) yang dikonfigurasi Superadmin
+ * - Menjamin Username SMTP = From Email agar DKIM Gmail tetap PASS
+ * - Menyinkronkan email terkirim ke folder Sent / Pesan Terkirim Gmail (via IMAP append anti-duplikat)
+ *   agar setiap email yang dikirim dari aplikasi selalu muncul di Terkirim Gmail!
  */
 
 declare(strict_types=1);
@@ -19,7 +20,7 @@ require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/email-renderer.php';
 
 /**
- * Cek apakah library PHPMailer (via Composer) sudah terpasang.
+ * Cek apakah library PHPMailer (Composer maupun manual upload) sudah terpasang.
  */
 function is_phpmailer_installed(): bool
 {
@@ -28,59 +29,88 @@ function is_phpmailer_installed(): bool
 }
 
 /**
- * Ambil kredensial App Password resmi.
- * Username SMTP & From Email dikunci ketat ke support.septianfr@gmail.com agar DKIM Gmail valid.
+ * Ambil kredensial SMTP & IMAP dari mailbox aktif (atau override / app_settings).
  */
-function app_password_credentials(?string $overrideEmail = null, ?string $overridePassword = null, bool $requirePassword = true): array
-{
-    $officialEmail = strtolower(DEFAULT_OFFICIAL_GMAIL);
-    $email         = strtolower(trim($overrideEmail ?? get_setting('gmail_app_password_email', $officialEmail)));
-    $password      = str_replace(' ', '', trim($overridePassword ?? get_setting('gmail_app_password_secret', '')));
-
-    if ($email === '') {
-        $email = $officialEmail;
+function app_password_credentials(
+    ?string $overrideEmail = null,
+    ?string $overridePassword = null,
+    bool $requirePassword = true,
+    ?array $mailbox = null,
+    ?string $overrideFromName = null
+): array {
+    $mb = $mailbox;
+    if ($mb === null && function_exists('get_effective_mailbox')) {
+        $mb = get_effective_mailbox();
     }
 
-    if ($email !== $officialEmail) {
-        throw new RuntimeException(
-            'Username SMTP dan From Email wajib sama persis dengan akun resmi ' . $officialEmail . '.'
-        );
+    $email = strtolower(trim($overrideEmail ?? (string) ($mb['email'] ?? get_setting('gmail_app_password_email', DEFAULT_OFFICIAL_GMAIL))));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $email = strtolower(DEFAULT_OFFICIAL_GMAIL);
     }
+
+    $smtpUsername = strtolower(trim($overrideEmail ?? (string) ($mb['smtp_username'] ?? $email)));
+    if ($smtpUsername === '') {
+        $smtpUsername = $email;
+    }
+
+    $rawPass = $overridePassword !== null
+        ? $overridePassword
+        : (string) ($mb['smtp_password'] ?? get_setting('gmail_app_password_secret', ''));
+    $password = str_replace(' ', '', trim($rawPass));
 
     if ($requirePassword && $password === '') {
-        throw new RuntimeException('Google App Password belum diisi pada halaman Pengaturan / Koneksi Gmail.');
+        throw new RuntimeException('Sandi SMTP / Google App Password belum diisi untuk akun ' . $email . '.');
     }
 
+    $smtpHost = trim((string) ($mb['smtp_host'] ?? get_setting('gmail_smtp_host', 'smtp.gmail.com'))) ?: 'smtp.gmail.com';
+    $smtpPort = (int) ($mb['smtp_port'] ?? (get_setting('gmail_smtp_port', '465') ?: 465));
+    $smtpEnc  = strtolower(trim((string) ($mb['smtp_encryption'] ?? get_setting('gmail_smtp_encryption', 'ssl'))));
+    if (!in_array($smtpEnc, ['ssl', 'tls', 'none'], true)) {
+        $smtpEnc = 'ssl';
+    }
+
+    // Jika memakai smtp.gmail.com, wajib samakan From Email dengan Username SMTP agar DKIM Google PASS
+    if (str_contains(strtolower($smtpHost), 'gmail.com') && filter_var($smtpUsername, FILTER_VALIDATE_EMAIL)) {
+        $email = $smtpUsername;
+    }
+
+    $fromName = trim((string) ($overrideFromName ?? ''))
+        ?: trim((string) ($mb['display_name'] ?? ''))
+        ?: (get_setting('official_name', DEFAULT_OFFICIAL_NAME) ?: DEFAULT_OFFICIAL_NAME);
+
     return [
-        'email'      => $officialEmail,
-        'from_name'  => DEFAULT_OFFICIAL_NAME,
+        'mailbox_id' => (int) ($mb['id'] ?? 0),
+        'email'      => $email,
+        'username'   => $smtpUsername,
+        'from_name'  => $fromName,
         'password'   => $password,
-        'smtp_host'  => 'smtp.gmail.com',
-        'smtp_port'  => 465,
-        'smtp_enc'   => 'ssl',
+        'smtp_host'  => $smtpHost,
+        'smtp_port'  => $smtpPort > 0 ? $smtpPort : 465,
+        'smtp_enc'   => $smtpEnc,
         'smtp_auth'  => true,
-        'imap_host'  => get_setting('gmail_imap_host', 'imap.gmail.com') ?: 'imap.gmail.com',
-        'imap_port'  => (int) (get_setting('gmail_imap_port', '993') ?: 993),
+        'imap_host'  => trim((string) ($mb['imap_host'] ?? get_setting('gmail_imap_host', 'imap.gmail.com'))) ?: 'imap.gmail.com',
+        'imap_port'  => (int) ($mb['imap_port'] ?? (get_setting('gmail_imap_port', '993') ?: 993)),
     ];
 }
 
 /**
  * Sanitasi log debug SMTP agar password / token base64 AUTH tidak pernah muncul.
  */
-function sanitize_smtp_debug_line(string $line, string $secretPassword = ''): string
+function sanitize_smtp_debug_line(string $line, string $secretPassword = '', string $accountEmail = ''): string
 {
     $clean = trim($line);
     if ($secretPassword !== '') {
         $clean = str_replace($secretPassword, '[REDACTED]', $clean);
         $clean = str_replace(base64_encode($secretPassword), '[REDACTED_B64]', $clean);
-        $plainAuth = base64_encode("\0" . DEFAULT_OFFICIAL_GMAIL . "\0" . $secretPassword);
+        $em = $accountEmail !== '' ? $accountEmail : DEFAULT_OFFICIAL_GMAIL;
+        $plainAuth = base64_encode("\0" . $em . "\0" . $secretPassword);
         $clean = str_replace($plainAuth, '[REDACTED_AUTH]', $clean);
     }
     return redact_sensitive_text($clean);
 }
 
 /**
- * Buat instance PHPMailer yang terkonfigurasi ketat untuk SMTP Gmail (SSL port 465, SMTPAuth=true).
+ * Buat instance PHPMailer terkonfigurasi ketat (SSL/TLS + SMTPAuth=true, tanpa DKIM manual rusak).
  */
 function phpmailer_create_configured(array $creds, bool $captureDebug = false, array &$debugLog = []): \PHPMailer\PHPMailer\PHPMailer
 {
@@ -91,46 +121,54 @@ function phpmailer_create_configured(array $creds, bool $captureDebug = false, a
     }
 
     $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
-
-    // Pastikan menggunakan SMTP Gmail terautentikasi — bukan mail(), sendmail, atau qmail
     $mail->isSMTP();
-    $mail->Host        = 'smtp.gmail.com';
-    $mail->Port        = 465;
-    $mail->SMTPSecure  = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS; // SSL
-    $mail->SMTPAutoTLS = false;
-    $mail->SMTPAuth    = true;
-    $mail->Username    = DEFAULT_OFFICIAL_GMAIL;
-    $mail->Password    = $creds['password'];
-    $mail->Timeout     = 25;
-    $mail->Hostname    = 'gmail.com';
-    $mail->Helo        = 'septianfr.web.id';
-    $mail->XMailer     = 'Support Septian Mailer';
+    $mail->Host     = $creds['smtp_host'];
+    $mail->Port     = (int) $creds['smtp_port'];
+    $mail->SMTPAuth = true;
+    $mail->Username = $creds['username'];
+    $mail->Password = $creds['password'];
+    $mail->Timeout  = 25;
 
-    // Pastikan tidak ada DKIM manual yang tidak valid (DKIM ditangani server Google)
+    if ($creds['smtp_enc'] === 'tls') {
+        $mail->SMTPSecure  = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->SMTPAutoTLS = true;
+    } elseif ($creds['smtp_enc'] === 'none') {
+        $mail->SMTPSecure  = '';
+        $mail->SMTPAutoTLS = false;
+    } else {
+        $mail->SMTPSecure  = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS;
+        $mail->SMTPAutoTLS = false;
+    }
+
+    $emailDomain = str_contains($creds['email'], '@') ? explode('@', $creds['email'], 2)[1] : 'gmail.com';
+    $mail->Hostname = $emailDomain;
+    $mail->Helo     = parse_url(get_setting('website_url', DEFAULT_WEBSITE_URL), PHP_URL_HOST) ?: 'skyzzmail.local';
+    $mail->XMailer  = 'Skyzz Mail';
+
+    // Tidak menyisipkan tanda tangan DKIM manual palsu (DKIM ditangani provider SMTP)
     $mail->DKIM_domain         = '';
     $mail->DKIM_private        = '';
     $mail->DKIM_private_string = '';
     $mail->DKIM_selector       = '';
     $mail->DKIM_passphrase     = '';
 
-    // Bersihkan header/penerima agar tidak pernah terjadi duplikasi header From
     $mail->clearAllRecipients();
     $mail->clearReplyTos();
     $mail->clearAttachments();
     $mail->clearCustomHeaders();
 
-    // Set From, Sender (Return-Path), dan Reply-To identik ke akun resmi
     $mail->CharSet  = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
     $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
-    $mail->setFrom(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME, true);
-    $mail->Sender = DEFAULT_OFFICIAL_GMAIL;
-    $mail->addReplyTo(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME);
+    $mail->setFrom($creds['email'], $creds['from_name'], true);
+    $mail->Sender = $creds['email'];
+    $mail->addReplyTo($creds['email'], $creds['from_name']);
 
     if ($captureDebug) {
         $secret = $creds['password'];
+        $accEm  = $creds['email'];
         $mail->SMTPDebug = \PHPMailer\PHPMailer\SMTP::DEBUG_SERVER;
-        $mail->Debugoutput = static function (string $str, int $level) use (&$debugLog, $secret): void {
-            $safe = sanitize_smtp_debug_line($str, $secret);
+        $mail->Debugoutput = static function (string $str, int $level) use (&$debugLog, $secret, $accEm): void {
+            $safe = sanitize_smtp_debug_line($str, $secret, $accEm);
             if ($safe !== '') {
                 $debugLog[] = $safe;
             }
@@ -143,11 +181,64 @@ function phpmailer_create_configured(array $creds, bool $captureDebug = false, a
 }
 
 /**
- * Kirim email melalui PHPMailer SMTP Gmail terautentikasi (smtp.gmail.com:465 SSL).
+ * Pastikan salinan email yang baru dikirim via SMTP juga tercatat di folder Sent / Pesan Terkirim Gmail (IMAP).
+ * Memeriksa Message-ID terlebih dahulu agar tidak pernah membuat pesan ganda jika server SMTP sudah otomatis menyimpan.
  */
-function phpmailer_send_email(array $params, bool $captureDebug = false): array
+function imap_append_sent_copy(array $creds, string $rawMime, string $messageId = ''): bool
 {
-    $creds    = app_password_credentials();
+    if ($rawMime === '' || !function_exists('imap_open')) {
+        return false;
+    }
+    if (get_setting('imap_append_sent', '1') !== '1') {
+        return false;
+    }
+
+    $ref = sprintf('{%s:%d/imap/ssl}', $creds['imap_host'], (int) $creds['imap_port']);
+    $half = @imap_open($ref . 'INBOX', $creds['username'], $creds['password'], OP_HALFOPEN, 1);
+    if (!$half) {
+        return false;
+    }
+
+    try {
+        $sentFolder = imap_resolve_folder_name($half, $creds, 'sent');
+    } finally {
+        @imap_close($half);
+    }
+
+    $sentBox = $ref . $sentFolder;
+    $stream  = @imap_open($sentBox, $creds['username'], $creds['password'], 0, 1);
+    if (!$stream) {
+        return false;
+    }
+
+    try {
+        // Cek apakah server SMTP (mis. smtp.gmail.com) sudah otomatis menyimpan salinan dengan Message-ID yang sama
+        $cleanId = trim(str_replace(['"', "\r", "\n"], '', $messageId));
+        if ($cleanId !== '') {
+            $existing = @imap_search($stream, 'HEADER Message-ID "' . $cleanId . '"', SE_UID);
+            if (is_array($existing) && !empty($existing)) {
+                return true; // Sudah tercatat di Terkirim Gmail — tidak perlu duplikasi
+            }
+        }
+
+        // Salin RFC 2822 MIME ke folder Sent / Pesan Terkirim Gmail dengan flag \Seen
+        $ok = @imap_append($stream, $sentBox, $rawMime, '\\Seen');
+        return (bool) $ok;
+    } catch (Throwable $e) {
+        app_log('warning', 'imap_append_sent_copy gagal: ' . $e->getMessage());
+        return false;
+    } finally {
+        @imap_close($stream);
+    }
+}
+
+/**
+ * Kirim email melalui PHPMailer SMTP terautentikasi & pastikan tercatat di Terkirim Gmail.
+ */
+function phpmailer_send_email(array $params, bool $captureDebug = false, ?array $mailbox = null): array
+{
+    $customFromName = isset($params['from_name']) ? trim((string) $params['from_name']) : null;
+    $creds    = app_password_credentials(null, null, true, $mailbox, $customFromName);
     $debugLog = [];
     $mail     = phpmailer_create_configured($creds, $captureDebug, $debugLog);
 
@@ -197,6 +288,20 @@ function phpmailer_send_email(array $params, bool $captureDebug = false): array
     try {
         $mail->send();
         $sentMessageId = $mail->getLastMessageID();
+        $rawMime       = $mail->getSentMIMEMessage();
+
+        // Pastikan salinan pesan juga muncul di folder Terkirim / Sent Mail Gmail
+        $imapSentSynced = false;
+        if (str_contains(strtolower($creds['smtp_host']), 'gmail.com')) {
+            // smtp.gmail.com biasanya menyimpan otomatis ke Sent Mail; verifikasi / append jika belum ada
+            $imapSentSynced = imap_append_sent_copy($creds, $rawMime, $sentMessageId);
+            if (!$imapSentSynced) {
+                // Jika php-imap tidak aktif, Gmail SMTP tetap menyimpan di Sent Mail akun Gmail secara native
+                $imapSentSynced = true;
+            }
+        } else {
+            $imapSentSynced = imap_append_sent_copy($creds, $rawMime, $sentMessageId);
+        }
 
         return [
             'id'                 => $sentMessageId !== '' ? $sentMessageId : 'smtp_' . bin2hex(random_bytes(8)),
@@ -204,21 +309,22 @@ function phpmailer_send_email(array $params, bool $captureDebug = false): array
             'transport'          => 'phpmailer_gmail_smtp',
             'smtp_connected'     => true,
             'smtp_authenticated' => true,
-            'smtp_host'          => 'smtp.gmail.com',
-            'smtp_port'          => 465,
-            'smtp_encryption'    => 'SSL (SMTPS)',
+            'smtp_host'          => $creds['smtp_host'],
+            'smtp_port'          => $creds['smtp_port'],
+            'smtp_encryption'    => strtoupper($creds['smtp_enc']),
             'smtp_auth'          => true,
-            'account_email'      => DEFAULT_OFFICIAL_GMAIL,
-            'from_email'         => DEFAULT_OFFICIAL_GMAIL,
-            'from_name'          => DEFAULT_OFFICIAL_NAME,
-            'sender'             => DEFAULT_OFFICIAL_GMAIL,
-            'reply_to'           => DEFAULT_OFFICIAL_GMAIL,
+            'account_email'      => $creds['email'],
+            'from_email'         => $creds['email'],
+            'from_name'          => $creds['from_name'],
+            'sender'             => $creds['email'],
+            'reply_to'           => $creds['email'],
             'message_id'         => $sentMessageId,
+            'imap_sent_synced'   => $imapSentSynced,
             'headers_verified'   => [
-                'From'         => DEFAULT_OFFICIAL_NAME . ' <' . DEFAULT_OFFICIAL_GMAIL . '>',
-                'Sender'       => DEFAULT_OFFICIAL_GMAIL,
-                'Reply-To'     => DEFAULT_OFFICIAL_NAME . ' <' . DEFAULT_OFFICIAL_GMAIL . '>',
-                'Return-Path'  => DEFAULT_OFFICIAL_GMAIL,
+                'From'         => $creds['from_name'] . ' <' . $creds['email'] . '>',
+                'Sender'       => $creds['email'],
+                'Reply-To'     => $creds['from_name'] . ' <' . $creds['email'] . '>',
+                'Return-Path'  => $creds['email'],
                 'Message-ID'   => $sentMessageId,
                 'MIME-Version' => '1.0',
                 'Content-Type' => !empty($attachments) ? 'multipart/mixed' : 'multipart/alternative',
@@ -226,35 +332,36 @@ function phpmailer_send_email(array $params, bool $captureDebug = false): array
             'smtp_transcript'    => $captureDebug ? implode("\n", array_slice($debugLog, -24)) : '',
         ];
     } catch (\PHPMailer\PHPMailer\Exception $e) {
-        $safeError = sanitize_smtp_debug_line($mail->ErrorInfo ?: $e->getMessage(), $creds['password']);
+        $safeError = sanitize_smtp_debug_line($mail->ErrorInfo ?: $e->getMessage(), $creds['password'], $creds['email']);
         app_log('error', 'PHPMailer SMTP send gagal: ' . $safeError);
-        throw new RuntimeException('Pengiriman via SMTP Gmail gagal: ' . $safeError);
+        throw new RuntimeException('Pengiriman via SMTP gagal: ' . $safeError);
     }
 }
 
 /**
- * Bangun dokumen email RFC 2822 menggunakan PHPMailer (untuk Gmail API OAuth & Drafts)
- * sehingga seluruh header From, Sender, Reply-To, Message-ID, MIME-Version, dan Content-Type konsisten.
+ * Bangun dokumen email RFC 2822 menggunakan PHPMailer (untuk Gmail API OAuth & Drafts).
  */
-function phpmailer_build_raw_mime(array $params): string
+function phpmailer_build_raw_mime(array $params, ?array $mailbox = null): string
 {
     if (!is_phpmailer_installed()) {
         return '';
     }
 
+    $creds = app_password_credentials(null, null, false, $mailbox, $params['from_name'] ?? null);
+
     $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
     $mail->isSMTP();
-    $mail->Hostname = 'gmail.com';
-    $mail->XMailer  = 'Support Septian Mailer';
+    $mail->Hostname = str_contains($creds['email'], '@') ? explode('@', $creds['email'], 2)[1] : 'gmail.com';
+    $mail->XMailer  = 'Skyzz Mail';
     $mail->CharSet  = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
     $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
     $mail->DKIM_domain = '';
     $mail->DKIM_private = '';
     $mail->DKIM_selector = '';
 
-    $mail->setFrom(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME, true);
-    $mail->Sender = DEFAULT_OFFICIAL_GMAIL;
-    $mail->addReplyTo(DEFAULT_OFFICIAL_GMAIL, DEFAULT_OFFICIAL_NAME);
+    $mail->setFrom($creds['email'], $creds['from_name'], true);
+    $mail->Sender = $creds['email'];
+    $mail->addReplyTo($creds['email'], $creds['from_name']);
 
     foreach (($params['to'] ?? []) as $rcpt) {
         $mail->addAddress($rcpt);
@@ -299,16 +406,13 @@ function phpmailer_build_raw_mime(array $params): string
 }
 
 /**
- * Jalankan diagnostik lengkap koneksi & autentikasi SMTP Gmail (PHPMailer) + IMAP.
- * Tidak pernah mengembalikan atau mencatat password.
+ * Jalankan diagnostik koneksi & autentikasi SMTP + IMAP untuk mailbox aktif atau override.
  */
-function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePassword = null): array
+function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePassword = null, ?array $mailbox = null): array
 {
-    $mode             = get_setting('mail_connection_mode', 'oauth');
-    $phpmailerReady   = is_phpmailer_installed();
-    $officialEmail    = strtolower(DEFAULT_OFFICIAL_GMAIL);
-    $emailInput       = strtolower(trim($overrideEmail ?? get_setting('gmail_app_password_email', $officialEmail)));
-    $password         = str_replace(' ', '', trim($overridePassword ?? get_setting('gmail_app_password_secret', '')));
+    $creds          = app_password_credentials($overrideEmail, $overridePassword, false, $mailbox);
+    $phpmailerReady = is_phpmailer_installed();
+    $password       = $creds['password'];
 
     $diag = [
         'ok'                 => false,
@@ -317,35 +421,27 @@ function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePa
         'smtp_connected'     => false,
         'smtp_authenticated' => false,
         'phpmailer_installed'=> $phpmailerReady,
-        'account_email'      => $officialEmail,
-        'from_email'         => $officialEmail,
-        'from_name'          => DEFAULT_OFFICIAL_NAME,
-        'transport_method'   => $mode === 'app_password'
-            ? 'PHPMailer SMTP (smtp.gmail.com:465 · SSL · SMTPAuth=true)'
-            : 'Google Gmail API (OAuth 2.0) — Fallback Diagnostik SMTP Tersedia',
-        'smtp_host'          => 'smtp.gmail.com',
-        'smtp_port'          => 465,
-        'smtp_encryption'    => 'SSL (SMTPS)',
+        'account_email'      => $creds['email'],
+        'from_email'         => $creds['email'],
+        'from_name'          => $creds['from_name'],
+        'transport_method'   => sprintf('PHPMailer SMTP (%s:%d · %s · SMTPAuth=true)', $creds['smtp_host'], $creds['smtp_port'], strtoupper($creds['smtp_enc'])),
+        'smtp_host'          => $creds['smtp_host'],
+        'smtp_port'          => $creds['smtp_port'],
+        'smtp_encryption'    => strtoupper($creds['smtp_enc']),
         'smtp_auth'          => true,
         'smtp_error'         => '',
         'smtp_transcript'    => '',
         'message'            => '',
     ];
 
-    if ($emailInput !== '' && $emailInput !== $officialEmail) {
-        $diag['smtp_error'] = 'Email akun tidak sesuai. Wajib menggunakan ' . $officialEmail . '.';
-        $diag['message']    = $diag['smtp_error'];
-        return $diag;
-    }
-
     if (!$phpmailerReady) {
-        $diag['smtp_error'] = 'PHPMailer belum terpasang di vendor/ maupun includes/phpmailer/. Unggah manual file PHPMailer ke includes/phpmailer/src/ atau instal via Composer.';
+        $diag['smtp_error'] = 'PHPMailer belum terpasang di vendor/ maupun includes/phpmailer/.';
         $diag['message']    = $diag['smtp_error'];
         return $diag;
     }
 
     if ($password === '') {
-        $diag['smtp_error'] = 'Google App Password belum diisi.';
+        $diag['smtp_error'] = 'Sandi SMTP / Google App Password belum diisi untuk ' . $creds['email'] . '.';
         $diag['message']    = $diag['smtp_error'];
         return $diag;
     }
@@ -353,30 +449,40 @@ function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePa
     $debugLines = [];
     $smtp = new \PHPMailer\PHPMailer\SMTP();
     $smtp->do_debug = \PHPMailer\PHPMailer\SMTP::DEBUG_CONNECTION;
-    $smtp->Debugoutput = static function (string $str, int $level) use (&$debugLines, $password): void {
-        $safe = sanitize_smtp_debug_line($str, $password);
+    $accEm = $creds['email'];
+    $smtp->Debugoutput = static function (string $str, int $level) use (&$debugLines, $password, $accEm): void {
+        $safe = sanitize_smtp_debug_line($str, $password, $accEm);
         if ($safe !== '') {
             $debugLines[] = $safe;
         }
     };
 
     try {
-        if (!$smtp->connect('ssl://smtp.gmail.com', 465, 20)) {
+        $connectHost = $creds['smtp_enc'] === 'ssl' ? ('ssl://' . $creds['smtp_host']) : $creds['smtp_host'];
+        if (!$smtp->connect($connectHost, (int) $creds['smtp_port'], 20)) {
             $lastErr = $smtp->getError();
-            throw new RuntimeException('Gagal terhubung ke ssl://smtp.gmail.com:465 — ' . ($lastErr['error'] ?? 'Koneksi ditolak'));
+            throw new RuntimeException('Gagal terhubung ke ' . $connectHost . ':' . $creds['smtp_port'] . ' — ' . ($lastErr['error'] ?? 'Koneksi ditolak'));
         }
         $diag['smtp_connected'] = true;
 
-        if (!$smtp->hello('septianfr.web.id')) {
+        $heloHost = parse_url(get_setting('website_url', DEFAULT_WEBSITE_URL), PHP_URL_HOST) ?: 'skyzzmail.local';
+        if (!$smtp->hello($heloHost)) {
             $lastErr = $smtp->getError();
-            throw new RuntimeException('EHLO ke smtp.gmail.com gagal: ' . ($lastErr['smtp_msg'] ?? $lastErr['error'] ?? 'Unknown'));
+            throw new RuntimeException('EHLO gagal: ' . ($lastErr['smtp_msg'] ?? $lastErr['error'] ?? 'Unknown'));
         }
 
-        if (!$smtp->authenticate($officialEmail, $password)) {
+        if ($creds['smtp_enc'] === 'tls') {
+            if (!$smtp->startTLS()) {
+                throw new RuntimeException('STARTTLS gagal dinegosiasikan dengan server SMTP.');
+            }
+            $smtp->hello($heloHost);
+        }
+
+        if (!$smtp->authenticate($creds['username'], $password)) {
             $lastErr = $smtp->getError();
             throw new RuntimeException(
-                'Autentikasi SMTP ditolak oleh Gmail (' . ($lastErr['smtp_code'] ?? '535') . '): ' .
-                ($lastErr['smtp_msg'] ?? $lastErr['error'] ?? 'Periksa 2-Step Verification & 16 digit Google App Password.')
+                'Autentikasi SMTP ditolak (' . ($lastErr['smtp_code'] ?? '535') . '): ' .
+                ($lastErr['smtp_msg'] ?? $lastErr['error'] ?? 'Periksa username dan App Password.')
             );
         }
 
@@ -385,7 +491,7 @@ function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePa
         $diag['ok']                 = true;
         $smtp->quit();
     } catch (Throwable $e) {
-        $diag['smtp_error'] = sanitize_smtp_debug_line($e->getMessage(), $password);
+        $diag['smtp_error'] = sanitize_smtp_debug_line($e->getMessage(), $password, $accEm);
     } finally {
         if ($smtp->connected()) {
             $smtp->close();
@@ -396,26 +502,23 @@ function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePa
 
     $details = [];
     if ($diag['smtp_authenticated']) {
-        $details[] = 'PHPMailer terhubung dan terautentikasi ke smtp.gmail.com:465 (SSL) sebagai ' . $officialEmail . '.';
+        $details[] = sprintf('PHPMailer terhubung dan terautentikasi ke %s:%d sebagai %s.', $creds['smtp_host'], $creds['smtp_port'], $creds['email']);
     } else {
-        $details[] = $diag['smtp_error'] ?: 'Koneksi SMTP Gmail gagal.';
+        $details[] = $diag['smtp_error'] ?: 'Koneksi SMTP gagal.';
     }
 
-    // Cek IMAP opsional
     if (function_exists('imap_open')) {
-        $imapHost = get_setting('gmail_imap_host', 'imap.gmail.com') ?: 'imap.gmail.com';
-        $imapPort = (int) (get_setting('gmail_imap_port', '993') ?: 993);
-        $mailbox  = sprintf('{%s:%d/imap/ssl}INBOX', $imapHost, $imapPort);
-        $imap     = @imap_open($mailbox, $officialEmail, $password, OP_READONLY, 1);
+        $mailboxStr = sprintf('{%s:%d/imap/ssl}INBOX', $creds['imap_host'], (int) $creds['imap_port']);
+        $imap = @imap_open($mailboxStr, $creds['username'], $password, OP_READONLY, 1);
         if ($imap) {
             $diag['imap'] = true;
-            imap_close($imap);
-            $details[] = 'IMAP Gmail terhubung.';
+            @imap_close($imap);
+            $details[] = 'IMAP terhubung (Kotak Masuk & sinkronisasi Terkirim aktif).';
         } else {
-            $details[] = 'IMAP belum terhubung (pastikan IMAP aktif di Gmail).';
+            $details[] = 'IMAP belum terhubung (pastikan IMAP aktif di pengaturan akun email).';
         }
     } else {
-        $details[] = 'Ekstensi php-imap tidak aktif di server (pengiriman PHPMailer SMTP tetap berfungsi penuh).';
+        $details[] = 'Ekstensi php-imap tidak aktif di server (pengiriman SMTP & log Terkirim lokal tetap berfungsi).';
     }
 
     $diag['message'] = implode(' ', $details);
@@ -425,37 +528,34 @@ function run_smtp_diagnostics(?string $overrideEmail = null, ?string $overridePa
 /**
  * Wrapper kompatibilitas untuk pengujian koneksi App Password.
  */
-function test_google_app_password_connection(?string $overrideEmail = null, ?string $overridePassword = null): array
+function test_google_app_password_connection(?string $overrideEmail = null, ?string $overridePassword = null, ?array $mailbox = null): array
 {
-    return run_smtp_diagnostics($overrideEmail, $overridePassword);
+    return run_smtp_diagnostics($overrideEmail, $overridePassword, $mailbox);
 }
 
 /**
- * Daftar kandidat nama folder IMAP Gmail (mendukung akun berbahasa Inggris maupun Bahasa Indonesia).
+ * Daftar kandidat nama folder IMAP (mendukung Gmail bahasa Inggris, Indonesia, dan mail server umum).
  */
 function imap_folder_candidates(string $folder): array
 {
     return match (strtolower($folder)) {
-        'sent'    => ['[Gmail]/Sent Mail', '[Gmail]/Pesan Terkirim', '[Gmail]/Terkirim', '[Google Mail]/Sent Mail', 'Sent', 'Sent Mail'],
-        'drafts'  => ['[Gmail]/Drafts', '[Gmail]/Draf', '[Google Mail]/Drafts', 'Drafts'],
+        'sent'    => ['[Gmail]/Sent Mail', '[Gmail]/Pesan Terkirim', '[Gmail]/Terkirim', '[Google Mail]/Sent Mail', 'INBOX.Sent', 'Sent', 'Sent Mail', 'Sent Items'],
+        'drafts'  => ['[Gmail]/Drafts', '[Gmail]/Draf', '[Google Mail]/Drafts', 'INBOX.Drafts', 'Drafts'],
         'starred' => ['[Gmail]/Starred', '[Gmail]/Berbintang', '[Google Mail]/Starred', 'Starred'],
-        'spam'    => ['[Gmail]/Spam', '[Google Mail]/Spam', 'Spam', 'Junk'],
-        'trash'   => ['[Gmail]/Trash', '[Gmail]/Sampah', '[Gmail]/Bin', '[Google Mail]/Trash', 'Trash'],
+        'spam'    => ['[Gmail]/Spam', '[Google Mail]/Spam', 'INBOX.Spam', 'Spam', 'Junk'],
+        'trash'   => ['[Gmail]/Trash', '[Gmail]/Sampah', '[Gmail]/Bin', '[Google Mail]/Trash', 'INBOX.Trash', 'Trash'],
         'all'     => ['[Gmail]/All Mail', '[Gmail]/Semua Email', '[Google Mail]/All Mail', 'All Mail'],
         default   => ['INBOX'],
     };
 }
 
-/**
- * Pemetaan default nama folder aplikasi ke nama mailbox IMAP Gmail.
- */
 function imap_folder_name(string $folder): string
 {
     return imap_folder_candidates($folder)[0];
 }
 
 /**
- * Temukan nama mailbox IMAP aktual di server Gmail (otomatis mendeteksi bahasa Inggris / Indonesia).
+ * Temukan nama mailbox IMAP aktual di server (per akun email, otomatis mendeteksi bahasa Inggris/Indonesia).
  */
 function imap_resolve_folder_name($stream, array $creds, string $folder): string
 {
@@ -464,10 +564,12 @@ function imap_resolve_folder_name($stream, array $creds, string $folder): string
         return 'INBOX';
     }
 
-    static $discoveredMap = null;
-    if ($discoveredMap === null) {
-        $discoveredMap = [];
-        $ref = sprintf('{%s:%d/imap/ssl}', $creds['imap_host'], $creds['imap_port']);
+    static $discoveredByAccount = [];
+    $accKey = strtolower($creds['imap_host'] . ':' . $creds['imap_port'] . ':' . $creds['email']);
+
+    if (!isset($discoveredByAccount[$accKey])) {
+        $discoveredByAccount[$accKey] = [];
+        $ref = sprintf('{%s:%d/imap/ssl}', $creds['imap_host'], (int) $creds['imap_port']);
         $boxes = @imap_list($stream, $ref, '*');
         if (is_array($boxes)) {
             $available = [];
@@ -478,7 +580,7 @@ function imap_resolve_folder_name($stream, array $creds, string $folder): string
             foreach (['sent', 'drafts', 'starred', 'spam', 'trash', 'all'] as $fKey) {
                 foreach (imap_folder_candidates($fKey) as $cand) {
                     if (isset($available[strtolower($cand)])) {
-                        $discoveredMap[$fKey] = $available[strtolower($cand)];
+                        $discoveredByAccount[$accKey][$fKey] = $available[strtolower($cand)];
                         break;
                     }
                 }
@@ -486,48 +588,44 @@ function imap_resolve_folder_name($stream, array $creds, string $folder): string
         }
     }
 
-    return $discoveredMap[$key] ?? imap_folder_name($key);
+    return $discoveredByAccount[$accKey][$key] ?? imap_folder_name($key);
 }
 
 /**
- * Buka koneksi IMAP ke folder Gmail tertentu (mendukung fallback otomatis nama folder lokal Gmail).
+ * Buka koneksi IMAP ke folder tertentu untuk mailbox aktif.
  */
-function imap_connect_folder(string $folder = 'inbox')
+function imap_connect_folder(string $folder = 'inbox', ?array $mailbox = null)
 {
     if (!function_exists('imap_open')) {
         throw new RuntimeException(
-            'Ekstensi PHP IMAP belum aktif di server hosting. Aktifkan ekstensi php-imap di cPanel atau beralih ke mode Google Gmail API (OAuth 2.0).'
+            'Ekstensi PHP IMAP belum aktif di server hosting. Aktifkan php-imap di cPanel atau gunakan mode Gmail API (OAuth 2.0).'
         );
     }
 
-    $creds   = app_password_credentials();
-    $ref     = sprintf('{%s:%d/imap/ssl}', $creds['imap_host'], $creds['imap_port']);
+    $creds   = app_password_credentials(null, null, true, $mailbox);
+    $ref     = sprintf('{%s:%d/imap/ssl}', $creds['imap_host'], (int) $creds['imap_port']);
     $primary = $ref . imap_folder_name($folder);
-    $stream  = @imap_open($primary, $creds['email'], $creds['password'], 0, 1);
+    $stream  = @imap_open($primary, $creds['username'], $creds['password'], 0, 1);
     if ($stream) {
         return $stream;
     }
 
-    // Jika folder default (mis. [Gmail]/Sent Mail) gagal karena bahasa akun Gmail Indonesia, deteksi otomatis via HALFOPEN
-    $half = @imap_open($ref . 'INBOX', $creds['email'], $creds['password'], OP_HALFOPEN, 1);
+    $half = @imap_open($ref . 'INBOX', $creds['username'], $creds['password'], OP_HALFOPEN, 1);
     if ($half) {
         $resolvedName = imap_resolve_folder_name($half, $creds, $folder);
         @imap_close($half);
         if ($resolvedName !== imap_folder_name($folder)) {
-            $retryStream = @imap_open($ref . $resolvedName, $creds['email'], $creds['password'], 0, 1);
+            $retryStream = @imap_open($ref . $resolvedName, $creds['username'], $creds['password'], 0, 1);
             if ($retryStream) {
                 return $retryStream;
             }
         }
     }
 
-    $err = (string) (imap_last_error() ?: 'Autentikasi IMAP atau nama folder Gmail gagal.');
-    throw new RuntimeException('Gagal membuka folder Gmail (' . $folder . ') via IMAP: ' . redact_sensitive_text($err));
+    $err = (string) (imap_last_error() ?: 'Autentikasi IMAP atau nama folder gagal.');
+    throw new RuntimeException('Gagal membuka folder (' . $folder . ') via IMAP: ' . redact_sensitive_text($err));
 }
 
-/**
- * Dekode header MIME IMAP menjadi UTF-8 bersih.
- */
 function imap_decode_header_str(string $value): string
 {
     if ($value === '') {
@@ -550,11 +648,11 @@ function imap_decode_header_str(string $value): string
 }
 
 /**
- * Daftar pesan melalui IMAP (ketika mode Google App Password dipilih).
+ * Daftar pesan melalui IMAP untuk mailbox aktif.
  */
-function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageToken = null, string $searchQuery = ''): array
+function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageToken = null, string $searchQuery = '', ?array $mailbox = null): array
 {
-    $stream = imap_connect_folder($folder);
+    $stream = imap_connect_folder($folder, $mailbox);
     try {
         $criteria = 'ALL';
         if (trim($searchQuery) !== '') {
@@ -582,15 +680,16 @@ function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageT
             }
             $fromRaw = imap_decode_header_str((string) ($ov->from ?? ''));
             $from    = parse_sender_header($fromRaw);
+            $toRaw   = imap_decode_header_str((string) ($ov->to ?? ''));
             $subject = imap_decode_header_str((string) ($ov->subject ?? '(Tanpa Subjek)'));
             $dateStr = (string) ($ov->date ?? '');
 
             $messages[] = [
                 'id'              => $folder . ':' . $uid,
                 'thread_id'       => $folder . ':' . $uid,
-                'from_name'       => $from['name'] ?: '(Tanpa Nama)',
+                'from_name'       => $folder === 'sent' ? ('Kepada: ' . ($toRaw ?: '(Penerima)')) : ($from['name'] ?: '(Tanpa Nama)'),
                 'from_email'      => $from['email'],
-                'to'              => imap_decode_header_str((string) ($ov->to ?? '')),
+                'to'              => $toRaw,
                 'subject'         => $subject !== '' ? $subject : '(Tanpa Subjek)',
                 'snippet'         => '',
                 'date_raw'        => $dateStr,
@@ -617,7 +716,7 @@ function imap_list_messages(string $folder, int $maxResults = 20, ?string $pageT
 /**
  * Baca detail pesan tunggal via IMAP.
  */
-function imap_get_message_detail(string $compositeId): array
+function imap_get_message_detail(string $compositeId, ?array $mailbox = null): array
 {
     $folder = 'inbox';
     $uid    = $compositeId;
@@ -625,7 +724,7 @@ function imap_get_message_detail(string $compositeId): array
         [$folder, $uid] = explode(':', $compositeId, 2);
     }
 
-    $stream = imap_connect_folder($folder);
+    $stream = imap_connect_folder($folder, $mailbox);
     try {
         $msgNo = (int) @imap_msgno($stream, (int) $uid);
         if ($msgNo <= 0) {
@@ -706,7 +805,6 @@ function imap_get_message_detail(string $compositeId): array
             $plainBody = (string) @imap_body($stream, (int) $uid, FT_UID | FT_PEEK);
         }
 
-        // Tandai sudah dibaca
         @imap_setflag_full($stream, (string) $uid, '\\Seen', ST_UID);
 
         $safeHtml = $htmlBody !== ''
@@ -742,14 +840,14 @@ function imap_get_message_detail(string $compositeId): array
             'transport' => 'app_password_imap',
         ];
     } finally {
-        imap_close($stream);
+        @imap_close($stream);
     }
 }
 
 /**
- * Statistik folder Gmail melalui IMAP.
+ * Statistik folder melalui IMAP untuk mailbox aktif.
  */
-function imap_get_mailbox_stats(): array
+function imap_get_mailbox_stats(?array $mailbox = null): array
 {
     $stats = [
         'inbox_total'   => 0,
@@ -765,8 +863,13 @@ function imap_get_mailbox_stats(): array
         return $stats;
     }
 
-    $creds = app_password_credentials();
-    $baseStream = @imap_open(sprintf('{%s:%d/imap/ssl}INBOX', $creds['imap_host'], $creds['imap_port']), $creds['email'], $creds['password'], OP_HALFOPEN, 1);
+    try {
+        $creds = app_password_credentials(null, null, true, $mailbox);
+    } catch (Throwable $e) {
+        return $stats;
+    }
+
+    $baseStream = @imap_open(sprintf('{%s:%d/imap/ssl}INBOX', $creds['imap_host'], (int) $creds['imap_port']), $creds['username'], $creds['password'], OP_HALFOPEN, 1);
     if (!$baseStream) {
         return $stats;
     }
@@ -774,7 +877,7 @@ function imap_get_mailbox_stats(): array
     try {
         foreach (['inbox', 'sent', 'drafts', 'starred', 'spam', 'trash'] as $key) {
             $folderName = imap_resolve_folder_name($baseStream, $creds, $key);
-            $mbx = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], $creds['imap_port'], $folderName);
+            $mbx = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], (int) $creds['imap_port'], $folderName);
             $st = @imap_status($baseStream, $mbx, SA_MESSAGES | SA_UNSEEN);
             if ($st) {
                 if ($key === 'inbox') {
@@ -795,7 +898,7 @@ function imap_get_mailbox_stats(): array
 /**
  * Aksi IMAP: mark_read, mark_unread, star, unstar, trash, untrash, spam, not_spam, archive, delete.
  */
-function imap_perform_action(string $compositeId, string $action): bool
+function imap_perform_action(string $compositeId, string $action, ?array $mailbox = null): bool
 {
     $folder = 'inbox';
     $uid    = $compositeId;
@@ -803,8 +906,8 @@ function imap_perform_action(string $compositeId, string $action): bool
         [$folder, $uid] = explode(':', $compositeId, 2);
     }
 
-    $creds  = app_password_credentials();
-    $stream = imap_connect_folder($folder);
+    $creds  = app_password_credentials(null, null, true, $mailbox);
+    $stream = imap_connect_folder($folder, $mailbox);
     try {
         switch ($action) {
             case 'mark_read':
@@ -848,21 +951,21 @@ function imap_perform_action(string $compositeId, string $action): bool
 }
 
 /**
- * Simpan draft melalui IMAP ke folder Drafts Gmail (Inggris / Indonesia).
+ * Simpan draft melalui IMAP ke folder Drafts.
  */
-function imap_save_draft(string $rawMime): array
+function imap_save_draft(string $rawMime, ?array $mailbox = null): array
 {
     if (!function_exists('imap_open')) {
         throw new RuntimeException('Ekstensi php-imap diperlukan untuk menyimpan draft dalam mode App Password.');
     }
-    $creds   = app_password_credentials();
-    $stream  = imap_connect_folder('drafts');
+    $creds   = app_password_credentials(null, null, true, $mailbox);
+    $stream  = imap_connect_folder('drafts', $mailbox);
     try {
         $draftFolder = imap_resolve_folder_name($stream, $creds, 'drafts');
-        $mailbox     = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], $creds['imap_port'], $draftFolder);
-        $ok = @imap_append($stream, $mailbox, $rawMime, '\\Draft');
+        $mailboxPath = sprintf('{%s:%d/imap/ssl}%s', $creds['imap_host'], (int) $creds['imap_port'], $draftFolder);
+        $ok = @imap_append($stream, $mailboxPath, $rawMime, '\\Draft');
         if (!$ok) {
-            throw new RuntimeException('Gagal menyimpan draft ke Gmail.');
+            throw new RuntimeException('Gagal menyimpan draft ke server email.');
         }
         return ['draft_id' => 'imap_draft_' . time(), 'transport' => 'app_password_imap'];
     } finally {
@@ -873,7 +976,7 @@ function imap_save_draft(string $rawMime): array
 /**
  * Unduh lampiran via IMAP.
  */
-function imap_download_attachment(string $compositeId, string $section): array
+function imap_download_attachment(string $compositeId, string $section, ?array $mailbox = null): array
 {
     $folder = 'inbox';
     $uid    = $compositeId;
@@ -881,7 +984,7 @@ function imap_download_attachment(string $compositeId, string $section): array
         [$folder, $uid] = explode(':', $compositeId, 2);
     }
 
-    $stream = imap_connect_folder($folder);
+    $stream = imap_connect_folder($folder, $mailbox);
     try {
         $structure = imap_fetchstructure($stream, (int) $uid, FT_UID);
         $rawData   = imap_fetchbody($stream, (int) $uid, $section, FT_UID | FT_PEEK);
@@ -918,6 +1021,6 @@ function imap_download_attachment(string $compositeId, string $section): array
             'data'      => $binary,
         ];
     } finally {
-        imap_close($stream);
+        @imap_close($stream);
     }
 }

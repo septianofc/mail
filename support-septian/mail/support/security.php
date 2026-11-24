@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — Keamanan Admin, Ganti Kata Sandi & Audit Log
+ * Skyzz Mail — Keamanan Sistem, Audit Log & Log Error Server (Superadmin)
  * Path: /mail/support/security.php
  */
 
@@ -8,9 +8,10 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/includes/auth.php';
 require_once __DIR__ . '/includes/gmail-client.php';
+require_once __DIR__ . '/includes/cache.php';
 
-$currentAdmin = require_admin();
-$pageTitle    = 'Keamanan Admin';
+$currentAdmin = require_superadmin();
+$pageTitle    = 'Keamanan & Log Error Server';
 $activePage   = 'security';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -20,7 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($formType === 'clear_error_logs') {
         try {
             $cleared = clear_error_logs();
-            log_activity('error_logs_cleared', 'Admin membersihkan ' . $cleared . ' file log error server.', 'security', (string) $currentAdmin['id']);
+            log_activity('error_logs_cleared', 'Superadmin membersihkan ' . $cleared . ' file log error server.', 'security', (string) $currentAdmin['id']);
             set_flash('success', 'Log error berhasil dibersihkan (' . $cleared . ' file).');
         } catch (Throwable $e) {
             set_flash('error', 'Gagal membersihkan log error: ' . $e->getMessage());
@@ -56,8 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $upd->execute([':h' => $newHash, ':id' => (int) $currentAdmin['id']]);
 
         session_regenerate_id(true);
-        log_activity('password_changed', 'Admin mengubah kata sandi akun.', 'security', (string) $currentAdmin['id']);
-        set_flash('success', 'Kata sandi admin berhasil diperbarui dan sesi diamankan ulang.');
+        log_activity('password_changed', 'Superadmin mengubah kata sandi akun.', 'security', (string) $currentAdmin['id']);
+        set_flash('success', 'Kata sandi Superadmin berhasil diperbarui dan sesi diamankan ulang.');
     } catch (Throwable $e) {
         set_flash('error', $e->getMessage());
     }
@@ -65,7 +66,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_to('security.php');
 }
 
-// Ambil riwayat aktivitas & percobaan login terbaru (dengan perlindungan try/catch)
 $logs = [];
 try {
     $logs = db()->query(
@@ -73,7 +73,7 @@ try {
          FROM activity_logs a
          LEFT JOIN admins ad ON ad.id = a.admin_id
          ORDER BY a.id DESC
-         LIMIT 30'
+         LIMIT 40'
     )->fetchAll();
 } catch (Throwable $e) {
     app_log('error', 'security.php gagal memuat activity_logs: ' . $e->getMessage());
@@ -94,14 +94,16 @@ $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
 
 $serverErrorLogs = read_recent_error_logs(80);
 $envChecks = [
-    'Versi PHP'           => PHP_VERSION . (version_compare(PHP_VERSION, '8.1.0', '>=') ? ' (Ideal)' : ' (Disarankan 8.1+)'),
-    'PDO MySQL'           => extension_loaded('pdo_mysql') ? 'Aktif' : 'Tidak Aktif',
-    'OpenSSL (Enkripsi)'  => extension_loaded('openssl') ? 'Aktif' : 'Tidak Aktif',
-    'MBString / DOM'      => (extension_loaded('mbstring') ? 'mbstring OK' : 'mbstring Fallback') . ' · ' . (class_exists('DOMDocument') ? 'DOM OK' : 'DOM Fallback'),
-    'PHPMailer'           => class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? 'Terpasang' : 'Belum Terpasang',
-    'Google API SDK'      => class_exists(\Google\Client::class) ? 'Terpasang' : 'Belum Terpasang',
-    'Ekstensi PHP IMAP'   => function_exists('imap_open') ? 'Aktif' : 'Tidak Aktif',
-    'Folder storage/logs' => (is_dir(LOGS_PATH) && is_writable(LOGS_PATH)) ? 'Dapat Ditulis (Aktif)' : 'Tidak Dapat Ditulis (CHMOD 755/750)',
+    'Versi PHP'              => PHP_VERSION . (version_compare(PHP_VERSION, '8.1.0', '>=') ? ' (Ideal)' : ' (Disarankan 8.1+)'),
+    'PDO MySQL'              => extension_loaded('pdo_mysql') ? 'Aktif' : 'Tidak Aktif',
+    'OpenSSL (AES-256-GCM)'  => extension_loaded('openssl') ? 'Aktif' : 'Tidak Aktif',
+    'MBString / DOM / Finfo' => (extension_loaded('mbstring') ? 'mbstring OK' : 'mbstring Fallback') . ' · ' . (class_exists('DOMDocument') ? 'DOM OK' : 'DOM Fallback') . ' · ' . (extension_loaded('fileinfo') ? 'Fileinfo OK' : 'Fileinfo Fallback'),
+    'PHPMailer'              => class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? 'Terpasang' : 'Belum Terpasang',
+    'Google API SDK'         => class_exists(\Google\Client::class) ? 'Terpasang' : 'Belum Terpasang',
+    'Ekstensi PHP IMAP'      => function_exists('imap_open') ? 'Aktif' : 'Tidak Aktif',
+    'Folder storage/logs'    => (is_dir(LOGS_PATH) && is_writable(LOGS_PATH)) ? 'Dapat Ditulis (Aktif)' : 'Tidak Dapat Ditulis (CHMOD 755/750)',
+    'Folder storage/cache'   => (is_dir(CACHE_PATH) && is_writable(CACHE_PATH)) ? 'Dapat Ditulis (Aktif)' : 'Tidak Dapat Ditulis (CHMOD 755/750)',
+    'Folder storage/uploads' => (is_dir(UPLOADS_PATH) && is_writable(UPLOADS_PATH)) ? 'Dapat Ditulis (Aktif)' : 'Tidak Dapat Ditulis (CHMOD 755/750)',
 ];
 
 require __DIR__ . '/includes/header.php';
@@ -109,14 +111,14 @@ require __DIR__ . '/includes/header.php';
 
 <div class="page-header">
     <div>
-        <h1 class="page-title">Keamanan Admin</h1>
-        <p class="page-subtitle">Ganti kata sandi, pantau perlindungan sesi, enkripsi kredensial, dan audit log aktivitas</p>
+        <h1 class="page-title">Keamanan &amp; Log Error Server</h1>
+        <p class="page-subtitle">Ganti kata sandi Superadmin, pantau perlindungan sesi, enkripsi kredensial, audit log, dan catatan error PHP</p>
     </div>
 </div>
 
 <div class="two-col-grid" style="margin-bottom:20px;">
     <section class="card">
-        <h2 class="card-title">Ubah Kata Sandi Admin</h2>
+        <h2 class="card-title">Ubah Kata Sandi Superadmin</h2>
         <form method="post" style="margin-top:16px;">
             <?= csrf_field() ?>
             <div class="form-group">
@@ -145,16 +147,16 @@ require __DIR__ . '/includes/header.php';
                 <span class="spec-val text-success">AES-256-GCM Aktif</span>
             </div>
             <div class="spec-row">
-                <span class="spec-label">Hash Kata Sandi</span>
-                <span class="spec-val text-success">PHP password_hash() / password_verify()</span>
+                <span class="spec-label">Hash Kata Sandi &amp; API Key</span>
+                <span class="spec-val text-success">password_hash() + SHA-256 API Key</span>
             </div>
             <div class="spec-row">
-                <span class="spec-label">Proteksi CSRF &amp; PDO</span>
-                <span class="spec-val text-success">Token Sesi + Prepared Statements Asli</span>
+                <span class="spec-label">Proteksi CSRF, RBAC &amp; PDO</span>
+                <span class="spec-val text-success">Token Sesi + Role Guard + Prepared Statements</span>
             </div>
             <div class="spec-row">
                 <span class="spec-label">Rate Limiting Login</span>
-                <span class="spec-val">Maks. <?= LOGIN_MAX_ATTEMPTS ?> gagal / <?= LOGIN_LOCKOUT_MINUTES ?> menit (<?= $failedRecent ?> gagal dalam 24 jam)</span>
+                <span class="spec-val">Maks. <?= LOGIN_MAX_ATTEMPTS ?> gagal / <?= LOGIN_LOCKOUT_MINUTES ?> menit (<?= $failedRecent ?> gagal 24 jam)</span>
             </div>
             <div class="spec-row">
                 <span class="spec-label">Koneksi HTTPS</span>
@@ -170,14 +172,14 @@ require __DIR__ . '/includes/header.php';
 
 <section class="card">
     <div class="card-header">
-        <h2 class="card-title">Log Audit Aktivitas Terbaru (30 Terakhir)</h2>
+        <h2 class="card-title">Log Audit Aktivitas Terbaru (40 Terakhir)</h2>
     </div>
     <div class="table-responsive">
         <table class="data-table">
             <thead>
                 <tr>
                     <th>Waktu</th>
-                    <th>Admin</th>
+                    <th>Pengguna</th>
                     <th>Aksi</th>
                     <th>Keterangan</th>
                     <th>IP</th>

@@ -9,7 +9,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/includes/auth.php';
 require_once dirname(__DIR__) . '/includes/smtp-imap-service.php';
 
-$admin = require_admin(true);
+$admin = require_superadmin(true);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     json_response(['ok' => false, 'message' => 'Metode tidak diizinkan.'], 405);
@@ -21,8 +21,9 @@ require_csrf(true);
 try {
     $email    = isset($data['email']) && trim((string) $data['email']) !== '' ? trim((string) $data['email']) : null;
     $password = isset($data['app_password']) && trim((string) $data['app_password']) !== '' ? trim((string) $data['app_password']) : null;
+    $mb       = !empty($data['mailbox_id']) ? get_mailbox_by_id((int) $data['mailbox_id']) : null;
 
-    $result = run_smtp_diagnostics($email, $password);
+    $result = run_smtp_diagnostics($email, $password, $mb);
 
     log_activity(
         'test_app_password',

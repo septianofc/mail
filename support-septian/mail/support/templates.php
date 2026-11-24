@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — Manajemen Template Email Profesional
+ * Skyzz Mail — Manajemen Template Email Kustom Bebas
  * Path: /mail/support/templates.php
  */
 
@@ -11,11 +11,14 @@ require_once __DIR__ . '/includes/gmail-client.php';
 require_once __DIR__ . '/includes/email-renderer.php';
 
 $currentAdmin = require_admin();
+$isSuper      = is_superadmin($currentAdmin);
+$quota        = get_user_quota_status($currentAdmin);
+$plan         = $quota['plan'];
 $pageTitle    = 'Manajemen Template Email';
 $activePage   = 'templates';
 
 $filterCat = trim((string) ($_GET['category'] ?? 'all'));
-$templates = get_templates($filterCat);
+$templates = get_templates($filterCat, (int) $currentAdmin['id'], $isSuper);
 $variables = get_template_variables_catalog();
 
 $categoryLabels = [
@@ -32,15 +35,25 @@ require __DIR__ . '/includes/header.php';
 
 <div class="page-header">
     <div>
-        <h1 class="page-title">Manajemen Template Email</h1>
-        <p class="page-subtitle">Kelola seluruh template balasan, pesan baru, teruskan, dan draft resmi Support Septian F. R.</p>
+        <h1 class="page-title">Template Email Kustom</h1>
+        <p class="page-subtitle">Bebas buat, edit, dan kustomisasi template balasan, pesan baru, teruskan, serta draft sesuai kebutuhan brand Anda sendiri</p>
     </div>
     <div class="page-actions">
         <a href="<?= e(base_url('template-preview.php')) ?>" class="btn btn-secondary">Preview Template</a>
-        <a href="<?= e(base_url('settings.php#branding')) ?>" class="btn btn-secondary">Atur Logo &amp; Footer</a>
+        <?php if ($isSuper): ?>
+            <a href="<?= e(base_url('settings.php#branding')) ?>" class="btn btn-secondary">Atur Branding Global</a>
+        <?php else: ?>
+            <a href="<?= e(base_url('profile.php')) ?>" class="btn btn-secondary">Atur Pengirim &amp; Tanda Tangan</a>
+        <?php endif; ?>
         <button type="button" class="btn btn-primary" id="btnNewTemplate">+ Buat Template Baru</button>
     </div>
 </div>
+
+<?php if (!empty($plan['has_watermark']) && !$isSuper): ?>
+    <div class="alert alert-info" style="margin-bottom:16px;">
+        <span>Anda bebas membuat template kustom di paket <strong><?= e((string) ($plan['name'] ?? 'Free')) ?></strong>. Email keluar pada paket ini menyertakan watermark kecil <em>"<?= e((string) ($plan['watermark_text'] ?: get_setting('free_watermark_text', FREE_WATERMARK_DEFAULT))) ?>"</em>. <a href="<?= e(base_url('billing.php')) ?>"><strong>Upgrade ke Lite/Pro/Business</strong></a> untuk menghapus watermark.</span>
+    </div>
+<?php endif; ?>
 
 <!-- Category Filter Tabs -->
 <div class="filter-bar" role="tablist">
@@ -59,11 +72,16 @@ require __DIR__ . '/includes/header.php';
 
         <?php if (empty($templates)): ?>
             <div class="empty-state">
-                <p class="muted">Belum ada template pada kategori ini.</p>
+                <p class="muted">Belum ada template pada kategori ini. Klik <strong>+ Buat Template Baru</strong> untuk membuat template kustom Anda.</p>
             </div>
         <?php else: ?>
             <div class="template-list" id="templateList">
                 <?php foreach ($templates as $tpl): ?>
+                    <?php
+                    $ownerId  = isset($tpl['owner_id']) && $tpl['owner_id'] !== null ? (int) $tpl['owner_id'] : null;
+                    $canEdit  = $isSuper || ($ownerId !== null && $ownerId === (int) $currentAdmin['id']);
+                    $isGlobal = ($ownerId === null);
+                    ?>
                     <div class="template-row" data-tpl-id="<?= (int) $tpl['id'] ?>">
                         <div class="template-row-main">
                             <div class="template-row-title">
@@ -71,6 +89,9 @@ require __DIR__ . '/includes/header.php';
                                 <?php if ((int) ($tpl['is_default'] ?? 0) === 1): ?>
                                     <span class="default-marker">Default</span>
                                 <?php endif; ?>
+                                <span class="badge-pill <?= $isGlobal ? 'badge-neutral' : 'badge-primary' ?>">
+                                    <?= $isGlobal ? 'Template Bawaan' : 'Milik Anda' ?>
+                                </span>
                             </div>
                             <div class="template-row-meta">
                                 <?= e($categoryLabels[(string) ($tpl['category'] ?? '')] ?? (string) ($tpl['category'] ?? '-')) ?>
@@ -81,13 +102,17 @@ require __DIR__ . '/includes/header.php';
                             <?php endif; ?>
                         </div>
                         <div class="template-row-actions">
-                            <button type="button" class="btn btn-secondary btn-sm" data-edit-template="<?= (int) $tpl['id'] ?>">Edit</button>
+                            <?php if ($canEdit): ?>
+                                <button type="button" class="btn btn-secondary btn-sm" data-edit-template="<?= (int) $tpl['id'] ?>">Edit</button>
+                            <?php endif; ?>
                             <a href="<?= e(base_url('template-preview.php?id=' . (int) $tpl['id'])) ?>" class="btn btn-secondary btn-sm">Preview</a>
-                            <button type="button" class="btn btn-ghost btn-sm" data-duplicate-template="<?= (int) $tpl['id'] ?>">Gandakan</button>
-                            <?php if ((int) $tpl['is_default'] !== 1): ?>
+                            <button type="button" class="btn btn-ghost btn-sm" data-duplicate-template="<?= (int) $tpl['id'] ?>"><?= $canEdit ? 'Gandakan' : 'Salin ke Kustom' ?></button>
+                            <?php if ($canEdit && (int) $tpl['is_default'] !== 1): ?>
                                 <button type="button" class="btn btn-ghost btn-sm" data-default-template="<?= (int) $tpl['id'] ?>">Jadikan Default</button>
                             <?php endif; ?>
-                            <button type="button" class="btn btn-ghost btn-sm text-danger" data-delete-template="<?= (int) $tpl['id'] ?>" data-tpl-name="<?= e($tpl['name']) ?>">Hapus</button>
+                            <?php if ($canEdit): ?>
+                                <button type="button" class="btn btn-ghost btn-sm text-danger" data-delete-template="<?= (int) $tpl['id'] ?>" data-tpl-name="<?= e((string) ($tpl['name'] ?? '')) ?>">Hapus</button>
+                            <?php endif; ?>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -99,8 +124,8 @@ require __DIR__ . '/includes/header.php';
     <section class="card" id="templateEditorCard">
         <div class="card-header">
             <div>
-                <h2 class="card-title" id="templateFormHeading">Buat Template Baru</h2>
-                <p class="card-subtitle">Desain header logo &amp; footer identitas resmi Support Septian F. R. otomatis membungkus konten ini.</p>
+                <h2 class="card-title" id="templateFormHeading">Buat Template Kustom Baru</h2>
+                <p class="card-subtitle">Bebas desain konten email sesuai kebutuhan bisnis, komunitas, atau personal Anda.</p>
             </div>
         </div>
 
@@ -110,7 +135,7 @@ require __DIR__ . '/includes/header.php';
 
             <div class="form-group">
                 <label for="tplName">Nama Template</label>
-                <input type="text" id="tplName" name="name" placeholder="Contoh: Konfirmasi Pembayaran" required>
+                <input type="text" id="tplName" name="name" placeholder="Contoh: Konfirmasi Pesanan / Sapaan Pelanggan" required>
             </div>
 
             <div class="form-grid-2">
@@ -143,7 +168,7 @@ require __DIR__ . '/includes/header.php';
             <div class="form-group">
                 <label for="tplBodyHtml">Isi HTML Template</label>
                 <textarea id="tplBodyHtml" name="body_html" rows="10" class="code-textarea" required><p>Halo <strong>{nama_penerima}</strong>,</p>
-<p>Terima kasih telah menghubungi <strong>{nama_perusahaan}</strong>.</p>
+<p>Terima kasih telah menghubungi <strong>{nama_pengirim}</strong>.</p>
 <p>{isi_pesan}</p>
 <p>Apabila masih ada pertanyaan lain, silakan balas langsung email ini.</p></textarea>
             </div>

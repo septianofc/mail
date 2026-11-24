@@ -1,10 +1,11 @@
 <?php
 /**
- * Support Septian — Email Template Engine & HTML Sanitizer
+ * Skyzz Mail — Customizable Email Template Engine, Watermark & HTML Sanitizer
  *
- * - Menghasilkan email HTML profesional bergaya Google (lebar 600px, background putih, inline CSS)
- * - Mendukung seluruh variabel dinamis Support Septian F. R.
- * - Mensanitasi HTML email masuk sebelum ditampilkan di browser (anti-XSS)
+ * - Template bebas kustom untuk setiap pengguna & superadmin (tidak dikunci ke satu merek)
+ * - Paket Free otomatis menyertakan watermark: "Dikirim Menggunakan Aplikasi Skyzz Mail"
+ * - Paket Berbayar (Lite, Pro, Business) & Superadmin bebas watermark
+ * - Sanitasi HTML anti-XSS untuk email masuk & keluar
  */
 
 declare(strict_types=1);
@@ -27,11 +28,11 @@ function get_template_variables_catalog(): array
         '{email_penerima}'  => 'Alamat email penerima',
         '{subjek}'          => 'Subjek email / percakapan',
         '{tanggal}'         => 'Tanggal pengiriman (format Indonesia)',
-        '{nama_pengirim}'   => 'Nama admin pengirim',
+        '{nama_pengirim}'   => 'Nama pengirim kustom Anda',
         '{isi_pesan}'       => 'Isi utama pesan dari editor',
-        '{nama_perusahaan}' => 'Nama identitas resmi (Support Septian F. R.)',
-        '{website}'         => 'Alamat situs resmi (https://septianfr.web.id)',
-        '{email_support}'   => 'Email resmi (support.septianfr@gmail.com)',
+        '{nama_perusahaan}' => 'Nama bisnis / identitas pengirim Anda',
+        '{website}'         => 'Alamat situs web',
+        '{email_support}'   => 'Alamat email pengirim aktif',
     ];
 }
 
@@ -69,34 +70,49 @@ function replace_template_variables(string $content, array $vars, bool $escapeVa
 }
 
 /**
- * Bungkus konten email dalam tata letak HTML profesional bergaya Google (inline CSS, 600px, responsif).
+ * Bungkus konten email dalam tata letak HTML profesional (inline CSS, 600px, responsif).
+ * Mendukung kustomisasi pengirim, tanda tangan, catatan footer, serta watermark otomatis untuk paket Free.
  */
 function render_professional_email_html(
     string $bodyHtml,
     string $subject = '',
     array $variables = [],
     bool $includeSignature = true,
-    string $quotedHtml = ''
+    string $quotedHtml = '',
+    array $options = []
 ): string {
     $settings = get_all_settings();
 
-    $appName         = e($settings['app_name'] ?: DEFAULT_APP_NAME);
-    $officialName    = e($settings['official_name'] ?: DEFAULT_OFFICIAL_NAME);
-    $supportEmail    = e($settings['support_email'] ?: DEFAULT_OFFICIAL_GMAIL);
-    $websiteUrl      = e(safe_http_url($settings['website_url'] ?: DEFAULT_WEBSITE_URL, DEFAULT_WEBSITE_URL));
-    $logoUrl         = e(safe_http_url($settings['logo_url'] ?: DEFAULT_LOGO_URL, DEFAULT_LOGO_URL));
-    $officialAddress = e($settings['official_address'] ?: DEFAULT_ADDRESS);
-    $footerNote      = e($settings['footer_note'] ?: 'Email ini dikirim melalui sistem layanan resmi Support Septian F. R.');
+    $brandTitle      = trim((string) ($options['sender_name'] ?? '')) ?: ($settings['official_name'] ?: DEFAULT_OFFICIAL_NAME);
+    $supportEmailRaw = trim((string) ($options['sender_email'] ?? '')) ?: ($settings['support_email'] ?: DEFAULT_OFFICIAL_GMAIL);
+    $websiteUrlRaw   = trim((string) ($options['website_url'] ?? '')) ?: ($settings['website_url'] ?: DEFAULT_WEBSITE_URL);
+    $logoUrlRaw      = trim((string) ($options['logo_url'] ?? '')) ?: ($settings['logo_url'] ?: DEFAULT_LOGO_URL);
+    $addressRaw      = trim((string) ($options['address'] ?? ($settings['official_address'] ?? '')));
+    $footerNoteRaw   = array_key_exists('footer_note', $options)
+        ? (string) $options['footer_note']
+        : (string) ($settings['footer_note'] ?? '');
+    $watermarkText   = trim((string) ($options['watermark_text'] ?? ''));
 
-    $resolvedBody = replace_template_variables($bodyHtml, array_merge($variables, ['subjek' => $subject]));
+    $varsMerged = array_merge([
+        'subjek'          => $subject,
+        'nama_pengirim'   => $brandTitle,
+        'nama_perusahaan' => $brandTitle,
+        'email_support'   => $supportEmailRaw,
+        'website'         => $websiteUrlRaw,
+    ], $variables);
+
+    $resolvedBody = replace_template_variables($bodyHtml, $varsMerged);
     $resolvedBody = sanitize_outgoing_body_html($resolvedBody);
 
     $signatureBlock = '';
     if ($includeSignature) {
-        $rawSig = trim((string) ($settings['email_signature'] ?? ''));
+        $rawSig = array_key_exists('signature', $options)
+            ? trim((string) $options['signature'])
+            : trim((string) ($settings['email_signature'] ?? ''));
         if ($rawSig !== '') {
+            $sigResolved = replace_template_variables($rawSig, $varsMerged);
             $signatureBlock = '<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e8eaed;font-size:14px;line-height:1.6;color:#3c4043;">'
-                . sanitize_outgoing_body_html($rawSig)
+                . sanitize_outgoing_body_html($sigResolved)
                 . '</div>';
         }
     }
@@ -108,7 +124,28 @@ function render_professional_email_html(
             . '</div>';
     }
 
-    $safeSubjectTitle = e($subject !== '' ? $subject : $appName);
+    $watermarkBlock = '';
+    if ($watermarkText !== '') {
+        $safeWm = e($watermarkText);
+        $watermarkBlock = '<tr><td style="padding:12px 32px;background-color:#f1f5f9;border-top:1px solid #e2e8f0;text-align:center;font-size:11.5px;color:#64748b;">'
+            . $safeWm
+            . '</td></tr>';
+    }
+
+    $eBrandTitle   = e($brandTitle);
+    $eSupportEmail = e($supportEmailRaw);
+    $eWebsiteUrl   = e(safe_http_url($websiteUrlRaw, DEFAULT_WEBSITE_URL));
+    $eLogoUrl      = e(safe_http_url($logoUrlRaw, DEFAULT_LOGO_URL));
+    $eAddress      = e($addressRaw);
+    $eFooterNote   = e($footerNoteRaw);
+    $safeSubjectTitle = e($subject !== '' ? $subject : $brandTitle);
+
+    $addressRow = $eAddress !== ''
+        ? '<tr><td style="padding-bottom:10px;color:#5f6368;"><strong style="color:#3c4043;">Alamat:</strong><br>' . $eAddress . '</td></tr>'
+        : '';
+    $footerNoteRow = $eFooterNote !== ''
+        ? '<tr><td style="padding-top:10px;border-top:1px solid #e8eaed;font-size:11.5px;color:#80868b;">' . $eFooterNote . '</td></tr>'
+        : '';
 
     return <<<HTML
 <!DOCTYPE html>
@@ -126,17 +163,15 @@ function render_professional_email_html(
         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
           <!-- Header -->
           <tr>
-            <td style="padding:28px 32px 20px 32px;border-bottom:1px solid #eceff1;background-color:#ffffff;">
+            <td style="padding:24px 32px 18px 32px;border-bottom:1px solid #eceff1;background-color:#ffffff;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
                   <td valign="middle" style="padding:0;">
-                    <a href="{$websiteUrl}" target="_blank" style="text-decoration:none;display:inline-block;">
-                      <img src="{$logoUrl}" alt="{$appName}" width="40" height="40" style="display:inline-block;vertical-align:middle;border:0;border-radius:8px;max-width:40px;height:auto;margin-right:12px;">
-                      <span style="display:inline-block;vertical-align:middle;font-size:19px;font-weight:700;color:#111827;letter-spacing:-0.01em;">{$appName}</span>
-                    </a>
+                    <img src="{$eLogoUrl}" alt="{$eBrandTitle}" width="36" height="36" style="display:inline-block;vertical-align:middle;border:0;border-radius:8px;max-width:36px;height:auto;margin-right:10px;">
+                    <span style="display:inline-block;vertical-align:middle;font-size:18px;font-weight:700;color:#111827;letter-spacing:-0.01em;">{$eBrandTitle}</span>
                   </td>
                   <td align="right" valign="middle" style="padding:0;font-size:12px;color:#5f6368;">
-                    Layanan Resmi
+                    {$eSupportEmail}
                   </td>
                 </tr>
               </table>
@@ -154,43 +189,22 @@ function render_professional_email_html(
             </td>
           </tr>
 
-          <!-- Divider -->
+          <!-- Footer -->
           <tr>
-            <td style="padding:0 32px;">
-              <hr style="border:0;border-top:1px solid #e8eaed;margin:0;">
-            </td>
-          </tr>
-
-          <!-- Official Footer -->
-          <tr>
-            <td style="padding:24px 32px 28px 32px;background-color:#fafbfc;font-size:12.5px;line-height:1.65;color:#5f6368;">
+            <td style="padding:20px 32px 22px 32px;background-color:#fafbfc;border-top:1px solid #e8eaed;font-size:12.5px;line-height:1.65;color:#5f6368;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
-                  <td style="padding-bottom:12px;">
-                    <img src="{$logoUrl}" alt="{$officialName}" width="28" height="28" style="display:inline-block;vertical-align:middle;border:0;border-radius:6px;margin-right:8px;">
-                    <strong style="vertical-align:middle;font-size:14px;color:#111827;">{$officialName}</strong>
-                  </td>
-                </tr>
-                <tr>
                   <td style="padding-bottom:8px;color:#3c4043;">
-                    Website: <a href="{$websiteUrl}" target="_blank" style="color:#1a73e8;text-decoration:none;">{$websiteUrl}</a><br>
-                    Email: <a href="mailto:{$supportEmail}" style="color:#1a73e8;text-decoration:none;">{$supportEmail}</a>
+                    <strong style="font-size:13.5px;color:#111827;">{$eBrandTitle}</strong><br>
+                    Email: <a href="mailto:{$eSupportEmail}" style="color:#1a73e8;text-decoration:none;">{$eSupportEmail}</a>
                   </td>
                 </tr>
-                <tr>
-                  <td style="padding-bottom:12px;color:#5f6368;">
-                    <strong style="color:#3c4043;">Alamat:</strong><br>
-                    {$officialAddress}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding-top:10px;border-top:1px solid #e8eaed;font-size:11.5px;color:#80868b;">
-                    {$footerNote}
-                  </td>
-                </tr>
+                {$addressRow}
+                {$footerNoteRow}
               </table>
             </td>
           </tr>
+          {$watermarkBlock}
         </table>
       </td>
     </tr>
@@ -201,9 +215,23 @@ HTML;
 }
 
 /**
- * Ambil template default untuk kategori tertentu (compose, reply, reply_all, forward, draft).
+ * Sisipkan watermark wajib paket Free ketika user memilih mode kirim HTML bebas (tanpa wrapper).
  */
-function get_default_template_by_category(string $category): ?array
+function append_plain_watermark_html(string $html, string $watermarkText): string
+{
+    $wm = trim($watermarkText);
+    if ($wm === '') {
+        return $html;
+    }
+    return $html . '<div style="margin-top:24px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:11.5px;color:#64748b;text-align:center;">'
+        . e($wm)
+        . '</div>';
+}
+
+/**
+ * Ambil template default untuk kategori tertentu (memprioritaskan template milik user jika ada).
+ */
+function get_default_template_by_category(string $category, ?int $ownerId = null): ?array
 {
     $allowed = ['reply', 'reply_all', 'compose', 'forward', 'draft'];
     if (!in_array($category, $allowed, true)) {
@@ -211,13 +239,23 @@ function get_default_template_by_category(string $category): ?array
     }
 
     try {
-        $stmt = db()->prepare(
-            'SELECT * FROM email_templates
-             WHERE category = :cat AND is_active = 1
-             ORDER BY is_default DESC, id ASC
-             LIMIT 1'
-        );
-        $stmt->execute([':cat' => $category]);
+        if ($ownerId !== null && $ownerId > 0) {
+            $stmt = db()->prepare(
+                'SELECT * FROM email_templates
+                 WHERE category = :cat AND is_active = 1 AND (owner_id = :oid OR owner_id IS NULL)
+                 ORDER BY (owner_id = :oid2) DESC, is_default DESC, id ASC
+                 LIMIT 1'
+            );
+            $stmt->execute([':cat' => $category, ':oid' => $ownerId, ':oid2' => $ownerId]);
+        } else {
+            $stmt = db()->prepare(
+                'SELECT * FROM email_templates
+                 WHERE category = :cat AND is_active = 1 AND owner_id IS NULL
+                 ORDER BY is_default DESC, id ASC
+                 LIMIT 1'
+            );
+            $stmt->execute([':cat' => $category]);
+        }
         $row = $stmt->fetch();
         return $row ?: null;
     } catch (Throwable $e) {
@@ -227,20 +265,38 @@ function get_default_template_by_category(string $category): ?array
 }
 
 /**
- * Ambil semua template aktif (opsional filter kategori).
+ * Ambil semua template yang dapat diakses pengguna (template global + template pribadi miliknya).
+ * Superadmin melihat semua template global & pribadinya.
  */
-function get_templates(?string $category = null): array
+function get_templates(?string $category = null, ?int $ownerId = null, bool $isSuper = false): array
 {
     try {
+        $where  = [];
+        $params = [];
+
         if ($category !== null && $category !== '' && $category !== 'all') {
-            $stmt = db()->prepare(
-                'SELECT * FROM email_templates WHERE category = :cat ORDER BY is_default DESC, name ASC'
-            );
-            $stmt->execute([':cat' => $category]);
-            return $stmt->fetchAll();
+            $where[] = 'category = :cat';
+            $params[':cat'] = $category;
         }
 
-        return db()->query('SELECT * FROM email_templates ORDER BY category ASC, is_default DESC, name ASC')->fetchAll();
+        if (!$isSuper) {
+            if ($ownerId !== null && $ownerId > 0) {
+                $where[] = '(owner_id IS NULL OR owner_id = :oid)';
+                $params[':oid'] = $ownerId;
+            } else {
+                $where[] = 'owner_id IS NULL';
+            }
+        }
+
+        $sql = 'SELECT * FROM email_templates';
+        if (!empty($where)) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+        $sql .= ' ORDER BY (owner_id IS NOT NULL) DESC, category ASC, is_default DESC, name ASC';
+
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
     } catch (Throwable $e) {
         app_log('error', 'get_templates error: ' . $e->getMessage());
         return [];
@@ -248,7 +304,7 @@ function get_templates(?string $category = null): array
 }
 
 /**
- * Sanitasi HTML email keluar (dari editor admin) — hanya izinkan tag pemformatan aman.
+ * Sanitasi HTML email keluar (dari editor) — hanya izinkan tag pemformatan aman.
  */
 function sanitize_outgoing_body_html(string $html): string
 {
@@ -256,8 +312,7 @@ function sanitize_outgoing_body_html(string $html): string
 }
 
 /**
- * Sanitasi HTML email masuk / keluar menggunakan DOMDocument allowlist.
- * Menghapus script, iframe, event handler on*, dan URL javascript:/vbscript:/data:text/html.
+ * Sanitasi HTML email masuk / keluar menggunakan DOMDocument allowlist (anti-XSS).
  */
 function sanitize_email_html(string $html): string
 {
@@ -278,7 +333,6 @@ function sanitize_email_html(string $html): string
         'align', 'valign', 'cellpadding', 'cellspacing', 'border', 'colspan', 'rowspan', 'target', 'rel',
     ];
 
-    // Fallback aman apabila ekstensi php-xml / DOMDocument tidak aktif di server hosting
     if (!class_exists('DOMDocument')) {
         $clean = (string) preg_replace('#<(script|style|iframe|object|embed|form|svg|math)[^>]*>.*?</\1>#is', '', $html);
         $allowStr = '<' . implode('><', $allowedTags) . '>';
@@ -295,7 +349,6 @@ function sanitize_email_html(string $html): string
     libxml_clear_errors();
     libxml_use_internal_errors($prevErrors);
 
-    // Hapus tag berbahaya beserta isinya
     foreach (['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'meta', 'link', 'base', 'svg', 'math'] as $dangerTag) {
         $nodes = $dom->getElementsByTagName($dangerTag);
         for ($i = $nodes->length - 1; $i >= 0; $i--) {
@@ -321,7 +374,6 @@ function sanitize_email_html(string $html): string
                 if ($child instanceof DOMElement) {
                     $tagName = strtolower($child->tagName);
                     if (!in_array($tagName, $allowedTags, true)) {
-                        // Pindahkan anak teks/elemen keluar lalu hapus tag tak diizinkan
                         while ($child->firstChild) {
                             $node->insertBefore($child->firstChild, $child);
                         }
@@ -329,7 +381,6 @@ function sanitize_email_html(string $html): string
                         continue;
                     }
 
-                    // Bersihkan atribut
                     $attrsToRemove = [];
                     foreach ($child->attributes as $attr) {
                         $attrName  = strtolower($attr->nodeName);

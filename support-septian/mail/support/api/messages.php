@@ -1,13 +1,7 @@
 <?php
 /**
- * Support Septian — API: Messages, Thread Detail & Mailbox Stats
+ * Skyzz Mail — API: Messages, Thread Detail & Mailbox Stats (dengan Cache & Force Refresh)
  * GET /mail/support/api/messages.php
- *   ?folder=inbox|sent|drafts|starred|spam|trash
- *   &pageToken=...
- *   &q=...
- *   &limit=20
- *   &id=... (ambil detail percakapan/thread)
- *   &stats=1 (ambil statistik kotak surat sungguhan)
  */
 
 declare(strict_types=1);
@@ -15,25 +9,31 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/includes/auth.php';
 require_once dirname(__DIR__) . '/includes/gmail-service.php';
 
-require_admin(true);
+$user = require_admin(true);
 
 try {
+    $force = (string) ($_GET['force'] ?? '') === '1';
+
     if (!empty($_GET['stats'])) {
         $status = get_mail_connection_status();
+        $quota  = get_user_quota_status($user);
+
         if (!$status['active_ready']) {
             json_response([
                 'ok'         => false,
                 'code'       => 'NOT_CONNECTED',
-                'message'    => $status['notice'] ?: 'Gmail belum terhubung.',
+                'message'    => $status['notice'] ?: 'Akun email belum dikonfigurasi.',
                 'connection' => $status,
+                'quota'      => $quota,
             ], 200);
         }
 
-        $stats = mail_get_dashboard_stats();
+        $stats = mail_get_dashboard_stats($force);
         json_response([
             'ok'         => true,
             'stats'      => $stats,
             'connection' => $status,
+            'quota'      => $quota,
         ]);
     }
 
@@ -56,7 +56,7 @@ try {
     $pageToken = isset($_GET['pageToken']) && $_GET['pageToken'] !== '' ? trim((string) $_GET['pageToken']) : null;
     $q         = trim((string) ($_GET['q'] ?? ''));
 
-    $result = mail_list_messages($folder, $limit, $pageToken, $q);
+    $result = mail_list_messages($folder, $limit, $pageToken, $q, $force);
 
     json_response([
         'ok'              => true,
@@ -65,6 +65,8 @@ try {
         'next_page_token' => $result['next_page_token'],
         'result_estimate' => $result['result_estimate'],
         'transport'       => $result['transport'],
+        'from_cache'      => !empty($result['from_cache']),
+        'notice'          => $result['notice'] ?? null,
     ]);
 } catch (Throwable $e) {
     app_log('error', 'API messages.php error: ' . $e->getMessage());

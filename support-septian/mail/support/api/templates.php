@@ -1,6 +1,6 @@
 <?php
 /**
- * Support Septian — API: Email Templates CRUD & Live Preview Renderer
+ * Skyzz Mail — API: Custom Email Templates CRUD & Live Preview Renderer
  * GET  /mail/support/api/templates.php?category=reply|compose|...&id=...
  * POST /mail/support/api/templates.php (action: create | update | delete | duplicate | set_default | preview)
  */
@@ -10,7 +10,9 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/includes/auth.php';
 require_once dirname(__DIR__) . '/includes/email-renderer.php';
 
-$admin = require_admin(true);
+$user    = require_admin(true);
+$isSuper = is_superadmin($user);
+$uid     = (int) $user['id'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     try {
@@ -21,11 +23,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             if (!$tpl) {
                 json_response(['ok' => false, 'message' => 'Template tidak ditemukan.'], 404);
             }
+            if (!$isSuper && $tpl['owner_id'] !== null && (int) $tpl['owner_id'] !== $uid) {
+                json_response(['ok' => false, 'message' => 'Akses ditolak.'], 403);
+            }
             json_response(['ok' => true, 'template' => $tpl]);
         }
 
         $category = isset($_GET['category']) ? trim((string) $_GET['category']) : null;
-        $list     = get_templates($category);
+        $list     = get_templates($category, $uid, $isSuper);
         json_response(['ok' => true, 'templates' => $list]);
     } catch (Throwable $e) {
         json_response(['ok' => false, 'message' => $e->getMessage()], 400);
@@ -46,16 +51,32 @@ try {
     switch ($action) {
         case 'preview':
             $bodyHtml = (string) ($data['body_html'] ?? '');
-            $subject  = (string) ($data['subject'] ?? 'Contoh Subjek Support Septian');
+            $subject  = (string) ($data['subject'] ?? 'Contoh Subjek Skyzz Mail');
+            $plan     = get_user_effective_plan($user);
+            $mb       = get_effective_mailbox($user);
+            $senderNm = trim((string) ($user['custom_sender_name'] ?? '')) ?: (string) ($mb['display_name'] ?? $user['name']);
             $vars     = [
-                'nama_penerima'  => (string) ($data['nama_penerima'] ?? 'Budi Santoso'),
-                'email_penerima' => (string) ($data['email_penerima'] ?? 'budi@contoh.id'),
-                'subjek'         => $subject,
-                'nama_pengirim'  => $admin['name'] ?: DEFAULT_OFFICIAL_NAME,
-                'isi_pesan'      => (string) ($data['isi_pesan'] ?? 'Terima kasih atas pesan Anda. Tim kami telah memeriksa detail yang disampaikan dan siap membantu langkah selanjutnya.'),
+                'nama_penerima'   => (string) ($data['nama_penerima'] ?? 'Budi Santoso'),
+                'email_penerima'  => (string) ($data['email_penerima'] ?? 'budi@contoh.id'),
+                'subjek'          => $subject,
+                'nama_pengirim'   => $senderNm,
+                'nama_perusahaan' => $senderNm,
+                'email_support'   => (string) ($mb['email'] ?? DEFAULT_OFFICIAL_GMAIL),
+                'isi_pesan'       => (string) ($data['isi_pesan'] ?? 'Terima kasih atas pesan Anda. Ini adalah contoh pratinjau template bebas kustom dari Skyzz Mail.'),
             ];
+            $opts = [
+                'sender_name'    => $senderNm,
+                'sender_email'   => (string) ($mb['email'] ?? DEFAULT_OFFICIAL_GMAIL),
+                'watermark_text' => !empty($plan['has_watermark']) ? ((string) ($plan['watermark_text'] ?: FREE_WATERMARK_DEFAULT)) : '',
+            ];
+            if (!empty($user['custom_signature'])) {
+                $opts['signature'] = (string) $user['custom_signature'];
+            }
+            if (isset($user['custom_footer_note']) && trim((string) $user['custom_footer_note']) !== '') {
+                $opts['footer_note'] = (string) $user['custom_footer_note'];
+            }
             $renderedSubject = replace_template_variables($subject, $vars, false);
-            $renderedHtml    = render_professional_email_html($bodyHtml, $renderedSubject, $vars, true);
+            $renderedHtml    = render_professional_email_html($bodyHtml, $renderedSubject, $vars, true, '', $opts);
             json_response([
                 'ok'      => true,
                 'subject' => $renderedSubject,
@@ -69,6 +90,7 @@ try {
             $bodyHtml = (string) ($data['body_html'] ?? '');
             $desc     = trim((string) ($data['description'] ?? ''));
             $isDef    = !empty($data['is_default']) ? 1 : 0;
+            $ownerId  = $isSuper && !empty($data['is_global']) ? null : ($isSuper ? null : $uid);
 
             if ($name === '' || trim($bodyHtml) === '') {
                 json_response(['ok' => false, 'message' => 'Nama template dan isi HTML wajib diisi.'], 422);
@@ -81,15 +103,21 @@ try {
             $safeBody = sanitize_outgoing_body_html($bodyHtml);
 
             if ($isDef === 1) {
-                $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat');
-                $reset->execute([':cat' => $category]);
+                if ($ownerId === null) {
+                    $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat AND owner_id IS NULL');
+                    $reset->execute([':cat' => $category]);
+                } else {
+                    $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat AND owner_id = :oid');
+                    $reset->execute([':cat' => $category, ':oid' => $ownerId]);
+                }
             }
 
             $stmt = db()->prepare(
-                'INSERT INTO email_templates (slug, name, category, subject_template, body_html, is_default, is_active, description, created_by, updated_by)
-                 VALUES (:slug, :name, :cat, :subj, :body, :def, 1, :desc, :uid1, :uid2)'
+                'INSERT INTO email_templates (owner_id, slug, name, category, subject_template, body_html, is_default, is_active, description, created_by, updated_by)
+                 VALUES (:oid, :slug, :name, :cat, :subj, :body, :def, 1, :desc, :uid1, :uid2)'
             );
             $stmt->execute([
+                ':oid'  => $ownerId,
                 ':slug' => $slug,
                 ':name' => $name,
                 ':cat'  => $category,
@@ -97,13 +125,13 @@ try {
                 ':body' => $safeBody,
                 ':def'  => $isDef,
                 ':desc' => $desc,
-                ':uid1' => (int) $admin['id'],
-                ':uid2' => (int) $admin['id'],
+                ':uid1' => $uid,
+                ':uid2' => $uid,
             ]);
             $newId = (int) db()->lastInsertId();
 
-            log_activity('template_created', 'Template email baru dibuat: ' . $name, 'template', (string) $newId);
-            json_response(['ok' => true, 'message' => 'Template berhasil dibuat.', 'id' => $newId]);
+            log_activity('template_created', 'Template email kustom dibuat: ' . $name, 'template', (string) $newId);
+            json_response(['ok' => true, 'message' => 'Template kustom berhasil dibuat.', 'id' => $newId]);
 
         case 'update':
             $id       = (int) ($data['id'] ?? 0);
@@ -117,14 +145,30 @@ try {
             if ($id <= 0 || $name === '' || trim($bodyHtml) === '') {
                 json_response(['ok' => false, 'message' => 'Data template tidak lengkap.'], 422);
             }
+
+            $chk = db()->prepare('SELECT id, owner_id FROM email_templates WHERE id = :id LIMIT 1');
+            $chk->execute([':id' => $id]);
+            $existing = $chk->fetch();
+            if (!$existing) {
+                json_response(['ok' => false, 'message' => 'Template tidak ditemukan.'], 404);
+            }
+            if (!$isSuper && (int) ($existing['owner_id'] ?? 0) !== $uid) {
+                json_response(['ok' => false, 'message' => 'Template bawaan global tidak bisa diubah langsung. Silakan klik Gandakan untuk membuat versi kustom milik Anda.'], 403);
+            }
+
             if (!in_array($category, $allowedCategories, true)) {
                 $category = 'reply';
             }
 
             $safeBody = sanitize_outgoing_body_html($bodyHtml);
             if ($isDef === 1) {
-                $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat');
-                $reset->execute([':cat' => $category]);
+                if ($existing['owner_id'] === null) {
+                    $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat AND owner_id IS NULL');
+                    $reset->execute([':cat' => $category]);
+                } else {
+                    $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat AND owner_id = :oid');
+                    $reset->execute([':cat' => $category, ':oid' => (int) $existing['owner_id']]);
+                }
             }
 
             $stmt = db()->prepare(
@@ -140,7 +184,7 @@ try {
                 ':body' => $safeBody,
                 ':def'  => $isDef,
                 ':desc' => $desc,
-                ':uid'  => (int) $admin['id'],
+                ':uid'  => $uid,
                 ':id'   => $id,
             ]);
 
@@ -155,51 +199,68 @@ try {
             if (!$orig) {
                 json_response(['ok' => false, 'message' => 'Template asal tidak ditemukan.'], 404);
             }
+            if (!$isSuper && $orig['owner_id'] !== null && (int) $orig['owner_id'] !== $uid) {
+                json_response(['ok' => false, 'message' => 'Akses ditolak.'], 403);
+            }
 
-            $newName = $orig['name'] . ' (Salinan)';
-            $newSlug = slugify($orig['name']) . '-copy-' . substr(bin2hex(random_bytes(3)), 0, 6);
+            $newOwner = $isSuper ? $orig['owner_id'] : $uid;
+            $newName  = $orig['name'] . ' (Kustom)';
+            $newSlug  = slugify($orig['name']) . '-copy-' . substr(bin2hex(random_bytes(3)), 0, 6);
             $ins = db()->prepare(
-                'INSERT INTO email_templates (slug, name, category, subject_template, body_html, is_default, is_active, description, created_by, updated_by)
-                 VALUES (:slug, :name, :cat, :subj, :body, 0, 1, :desc, :u1, :u2)'
+                'INSERT INTO email_templates (owner_id, slug, name, category, subject_template, body_html, is_default, is_active, description, created_by, updated_by)
+                 VALUES (:oid, :slug, :name, :cat, :subj, :body, 0, 1, :desc, :u1, :u2)'
             );
             $ins->execute([
+                ':oid'  => $newOwner,
                 ':slug' => $newSlug,
                 ':name' => $newName,
                 ':cat'  => $orig['category'],
                 ':subj' => $orig['subject_template'],
                 ':body' => $orig['body_html'],
                 ':desc' => $orig['description'],
-                ':u1'   => (int) $admin['id'],
-                ':u2'   => (int) $admin['id'],
+                ':u1'   => $uid,
+                ':u2'   => $uid,
             ]);
             $newId = (int) db()->lastInsertId();
             log_activity('template_duplicated', 'Template digandakan: ' . $newName, 'template', (string) $newId);
-            json_response(['ok' => true, 'message' => 'Template berhasil digandakan.', 'id' => $newId]);
+            json_response(['ok' => true, 'message' => 'Template berhasil digandakan menjadi template kustom Anda.', 'id' => $newId]);
 
         case 'set_default':
             $id = (int) ($data['id'] ?? 0);
-            $stmt = db()->prepare('SELECT id, name, category FROM email_templates WHERE id = :id LIMIT 1');
+            $stmt = db()->prepare('SELECT id, name, category, owner_id FROM email_templates WHERE id = :id LIMIT 1');
             $stmt->execute([':id' => $id]);
             $tpl = $stmt->fetch();
             if (!$tpl) {
                 json_response(['ok' => false, 'message' => 'Template tidak ditemukan.'], 404);
             }
-            $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat');
-            $reset->execute([':cat' => $tpl['category']]);
+            if (!$isSuper && (int) ($tpl['owner_id'] ?? 0) !== $uid) {
+                json_response(['ok' => false, 'message' => 'Hanya dapat menjadikan template kustom milik Anda sebagai default pribadi.'], 403);
+            }
+
+            if ($tpl['owner_id'] === null) {
+                $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat AND owner_id IS NULL');
+                $reset->execute([':cat' => $tpl['category']]);
+            } else {
+                $reset = db()->prepare('UPDATE email_templates SET is_default = 0 WHERE category = :cat AND owner_id = :oid');
+                $reset->execute([':cat' => $tpl['category'], ':oid' => (int) $tpl['owner_id']]);
+            }
 
             $set = db()->prepare('UPDATE email_templates SET is_default = 1, updated_by = :uid WHERE id = :id');
-            $set->execute([':uid' => (int) $admin['id'], ':id' => $id]);
+            $set->execute([':uid' => $uid, ':id' => $id]);
 
             log_activity('template_default', 'Template default diubah ke: ' . $tpl['name'], 'template', (string) $id);
             json_response(['ok' => true, 'message' => 'Template "' . $tpl['name'] . '" ditetapkan sebagai default.']);
 
         case 'delete':
             $id = (int) ($data['id'] ?? 0);
-            $stmt = db()->prepare('SELECT id, name FROM email_templates WHERE id = :id LIMIT 1');
+            $stmt = db()->prepare('SELECT id, name, owner_id FROM email_templates WHERE id = :id LIMIT 1');
             $stmt->execute([':id' => $id]);
             $tpl = $stmt->fetch();
             if (!$tpl) {
                 json_response(['ok' => false, 'message' => 'Template tidak ditemukan.'], 404);
+            }
+            if (!$isSuper && (int) ($tpl['owner_id'] ?? 0) !== $uid) {
+                json_response(['ok' => false, 'message' => 'Anda hanya dapat menghapus template kustom milik Anda sendiri.'], 403);
             }
 
             $del = db()->prepare('DELETE FROM email_templates WHERE id = :id');

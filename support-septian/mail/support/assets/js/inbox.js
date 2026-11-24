@@ -1,5 +1,5 @@
 /**
- * Support Septian — Dashboard Stats & Mailbox Folder Controller (Vanilla JS)
+ * Skyzz Mail — Dashboard Stats & Mailbox Folder Controller with Fast Client Caching (Vanilla JS)
  * Path: /mail/support/assets/js/inbox.js
  */
 
@@ -9,53 +9,114 @@
     const App = window.SupportApp;
     if (!App) return;
 
+    const CACHE_PREFIX = App.CACHE_PREFIX || 'skyzz_mail_cache_';
+    const FOLDER_TTL_MS = 45 * 1000;
+    const STATS_TTL_MS = 60 * 1000;
+
+    function cacheRead(key) {
+        try {
+            const raw = sessionStorage.getItem(CACHE_PREFIX + key);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed.exp !== 'number' || parsed.exp < Date.now()) {
+                sessionStorage.removeItem(CACHE_PREFIX + key);
+                return null;
+            }
+            return parsed.data;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function cacheWrite(key, data, ttlMs) {
+        try {
+            sessionStorage.setItem(CACHE_PREFIX + key, JSON.stringify({
+                exp: Date.now() + ttlMs,
+                data: data
+            }));
+        } catch (e) {
+            // Abaikan jika kuota sessionStorage penuh
+        }
+    }
+
+    function setText(id, value) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(value ?? '0');
+    }
+
+    function renderDashboardStats(stats) {
+        if (!stats) return;
+        setText('statInboxTotal', stats.inbox_total);
+        setText('statInboxUnread', stats.inbox_unread);
+        setText('statSentTotal', stats.sent_total);
+        setText('statDraftsTotal', stats.drafts_total);
+        setText('statStarredTotal', stats.starred_total);
+
+        const sidebarBadge = document.getElementById('sidebarInboxUnread');
+        if (sidebarBadge && stats.inbox_unread > 0) {
+            sidebarBadge.textContent = String(stats.inbox_unread);
+        }
+    }
+
+    function renderDashboardRecent(recentBox, list) {
+        if (!recentBox) return;
+        if (!list || list.length === 0) {
+            recentBox.innerHTML = '<div class="empty-state"><p class="muted">Kotak masuk kosong.</p></div>';
+            return;
+        }
+        recentBox.innerHTML = list.map((m) => `
+            <a href="${App.buildUrl('view-email.php?id=' + encodeURIComponent(m.id) + '&folder=inbox')}"
+               class="mail-row-compact ${m.is_unread ? 'is-unread' : ''}">
+                <div class="mail-row-compact-main">
+                    <div class="mail-row-compact-top">
+                        <span class="mail-row-compact-sender">${App.escapeHtml(m.from_name)}</span>
+                        <span class="mail-row-compact-subject">${App.escapeHtml(m.subject)}</span>
+                    </div>
+                    <div class="mail-row-compact-snippet">${App.escapeHtml(m.snippet || m.from_email)}</div>
+                </div>
+                <span class="mail-date tabular-nums">${App.escapeHtml(m.date_short)}</span>
+            </a>
+        `).join('');
+    }
+
     // ------------------------------------------------------------------------
-    // 1. Dashboard Controller
+    // 1. Dashboard Controller (Stale-While-Revalidate)
     // ------------------------------------------------------------------------
-    async function loadDashboardData() {
+    async function loadDashboardData(forceRefresh = false) {
         const statsGrid = document.getElementById('dashboardStatsGrid');
         const recentBox = document.getElementById('dashboardRecentEmails');
         if (!statsGrid || statsGrid.dataset.connected !== '1') return;
 
+        const mbId = statsGrid.dataset.mailboxId || '0';
+        const statsKey = `dash_stats_mb_${mbId}`;
+        const recentKey = `dash_recent_mb_${mbId}`;
+
+        if (!forceRefresh) {
+            const cachedStats = cacheRead(statsKey);
+            const cachedRecent = cacheRead(recentKey);
+            if (cachedStats) renderDashboardStats(cachedStats);
+            if (cachedRecent) renderDashboardRecent(recentBox, cachedRecent);
+            if (cachedStats && cachedRecent) {
+                return;
+            }
+        }
+
+        const qs = forceRefresh ? '&force=1' : '';
         try {
             const [statsRes, inboxRes] = await Promise.all([
-                App.apiGet('api/messages.php?stats=1'),
-                App.apiGet('api/messages.php?folder=inbox&limit=8')
+                App.apiGet('api/messages.php?stats=1' + qs),
+                App.apiGet('api/messages.php?folder=inbox&limit=8' + qs)
             ]);
 
             if (statsRes.ok && statsRes.stats) {
-                const s = statsRes.stats;
-                setText('statInboxTotal', s.inbox_total);
-                setText('statInboxUnread', s.inbox_unread);
-                setText('statSentTotal', s.sent_total);
-                setText('statDraftsTotal', s.drafts_total);
-                setText('statStarredTotal', s.starred_total);
-
-                const sidebarBadge = document.getElementById('sidebarInboxUnread');
-                if (sidebarBadge && s.inbox_unread > 0) {
-                    sidebarBadge.textContent = String(s.inbox_unread);
-                }
+                cacheWrite(statsKey, statsRes.stats, STATS_TTL_MS);
+                renderDashboardStats(statsRes.stats);
             }
 
             if (recentBox) {
                 const list = inboxRes.messages || [];
-                if (list.length === 0) {
-                    recentBox.innerHTML = '<div class="empty-state"><p class="muted">Kotak masuk kosong.</p></div>';
-                } else {
-                    recentBox.innerHTML = list.map((m) => `
-                        <a href="${App.buildUrl('view-email.php?id=' + encodeURIComponent(m.id) + '&folder=inbox')}"
-                           class="mail-row-compact ${m.is_unread ? 'is-unread' : ''}">
-                            <div class="mail-row-compact-main">
-                                <div class="mail-row-compact-top">
-                                    <span class="mail-row-compact-sender">${App.escapeHtml(m.from_name)}</span>
-                                    <span class="mail-row-compact-subject">${App.escapeHtml(m.subject)}</span>
-                                </div>
-                                <div class="mail-row-compact-snippet">${App.escapeHtml(m.snippet || m.from_email)}</div>
-                            </div>
-                            <span class="mail-date tabular-nums">${App.escapeHtml(m.date_short)}</span>
-                        </a>
-                    `).join('');
-                }
+                cacheWrite(recentKey, list, FOLDER_TTL_MS);
+                renderDashboardRecent(recentBox, list);
             }
         } catch (err) {
             if (recentBox) {
@@ -63,11 +124,6 @@
             }
             App.showToast(err.message, 'error');
         }
-    }
-
-    function setText(id, value) {
-        const el = document.getElementById(id);
-        if (el) el.textContent = String(value ?? '0');
     }
 
     // ------------------------------------------------------------------------
@@ -80,6 +136,7 @@
         const folder    = container.dataset.folder || 'inbox';
         const query     = container.dataset.query || '';
         const connected = container.dataset.connected === '1';
+        const mbId      = container.dataset.mailboxId || '0';
 
         const listEl      = document.getElementById('mailboxList');
         const metaEl      = document.getElementById('mailboxMetaInfo');
@@ -97,28 +154,44 @@
             return;
         }
 
-        async function fetchPage(pageToken) {
+        function applyFolderResponse(res) {
+            const msgs = res.messages || [];
+            nextPageToken = res.next_page_token || null;
+
+            if (metaEl) {
+                metaEl.textContent = `Halaman ${currentIndex + 1} · ${msgs.length} pesan ditampilkan`;
+            }
+            if (btnPrev) btnPrev.disabled = currentIndex === 0;
+            if (btnNext) btnNext.disabled = !nextPageToken;
+
+            renderMessages(msgs);
+        }
+
+        async function fetchPage(pageToken, forceRefresh = false) {
+            if (selectAllEl) selectAllEl.checked = false;
+
+            const cacheKey = `folder_mb_${mbId}_${folder}_${query}_${pageToken || 'p1'}`;
+            if (!forceRefresh) {
+                const cached = cacheRead(cacheKey);
+                if (cached) {
+                    applyFolderResponse(cached);
+                    return;
+                }
+            }
+
             if (listEl) {
                 listEl.innerHTML = '<div class="loading-rows">' + '<div class="skeleton-row"></div>'.repeat(6) + '</div>';
             }
-            if (selectAllEl) selectAllEl.checked = false;
 
+            const forceParam = forceRefresh ? '&force=1' : '';
             const endpoint = query !== ''
-                ? `api/search.php?q=${encodeURIComponent(query)}&folder=${encodeURIComponent(folder)}${pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''}`
-                : `api/messages.php?folder=${encodeURIComponent(folder)}${pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''}`;
+                ? `api/search.php?q=${encodeURIComponent(query)}&folder=${encodeURIComponent(folder)}${pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''}${forceParam}`
+                : `api/messages.php?folder=${encodeURIComponent(folder)}${pageToken ? '&pageToken=' + encodeURIComponent(pageToken) : ''}${forceParam}`;
 
             try {
                 const res = await App.apiGet(endpoint);
-                const msgs = res.messages || [];
-                nextPageToken = res.next_page_token || null;
-
-                if (metaEl) {
-                    metaEl.textContent = `Halaman ${currentIndex + 1} · ${msgs.length} pesan ditampilkan`;
-                }
-                if (btnPrev) btnPrev.disabled = currentIndex === 0;
-                if (btnNext) btnNext.disabled = !nextPageToken;
-
-                renderMessages(msgs);
+                cacheWrite(cacheKey, res, FOLDER_TTL_MS);
+                applyFolderResponse(res);
             } catch (err) {
                 if (listEl) {
                     listEl.innerHTML = `<div class="empty-state"><p class="text-danger"><strong>Gagal memuat email</strong></p><p class="muted">${App.escapeHtml(err.message)}</p></div>`;
@@ -130,7 +203,7 @@
         function renderMessages(messages) {
             if (!listEl) return;
             if (!messages.length) {
-                listEl.innerHTML = '<div class="empty-state"><p><strong>Tidak ada email di folder ini.</strong></p><p class="muted">Semua pesan dari Gmail yang cocok akan muncul di sini.</p></div>';
+                listEl.innerHTML = '<div class="empty-state"><p><strong>Tidak ada email di folder ini.</strong></p><p class="muted">Semua pesan yang cocok akan muncul di sini.</p></div>';
                 return;
             }
 
@@ -180,6 +253,7 @@
                         btn.dataset.starred = currentlyStarred ? '0' : '1';
                         btn.classList.toggle('is-starred', !currentlyStarred);
                         btn.textContent = currentlyStarred ? '☆' : '★';
+                        App.clearClientCache();
                     } catch (err) {
                         App.showToast(err.message, 'error');
                     } finally {
@@ -223,8 +297,9 @@
 
                 try {
                     const res = await App.apiPost('api/actions.php', { action, ids });
+                    App.clearClientCache();
                     App.showToast(res.message || 'Aksi berhasil.', 'success');
-                    fetchPage(tokenHistory[currentIndex]);
+                    fetchPage(tokenHistory[currentIndex], true);
                 } catch (err) {
                     App.showToast(err.message, 'error');
                 }
@@ -236,7 +311,7 @@
                 if (!nextPageToken) return;
                 currentIndex++;
                 tokenHistory[currentIndex] = nextPageToken;
-                fetchPage(nextPageToken);
+                fetchPage(nextPageToken, false);
             });
         }
 
@@ -244,7 +319,7 @@
             btnPrev.addEventListener('click', () => {
                 if (currentIndex <= 0) return;
                 currentIndex--;
-                fetchPage(tokenHistory[currentIndex]);
+                fetchPage(tokenHistory[currentIndex], false);
             });
         }
 
@@ -252,23 +327,25 @@
             btnRefresh.addEventListener('click', () => {
                 tokenHistory = [''];
                 currentIndex = 0;
-                fetchPage('');
-                App.showToast('Memperbarui daftar email dari Gmail...', 'info', 2000);
+                App.clearClientCache();
+                fetchPage('', true);
+                App.showToast('Menyegarkan daftar email langsung dari server...', 'info', 2000);
             });
         }
 
-        fetchPage('');
+        fetchPage('', false);
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        loadDashboardData();
+        loadDashboardData(false);
         initMailbox();
 
         const btnDashRefresh = document.getElementById('btnRefreshDashboard');
         if (btnDashRefresh) {
             btnDashRefresh.addEventListener('click', () => {
-                loadDashboardData();
-                App.showToast('Menyegarkan data Gmail...', 'info', 2000);
+                App.clearClientCache();
+                loadDashboardData(true);
+                App.showToast('Menyegarkan data email terbaru...', 'info', 2000);
             });
         }
     });

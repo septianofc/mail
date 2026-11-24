@@ -1,10 +1,14 @@
 <?php
 /**
- * Support Septian — Unified Gmail Service Layer
+ * Skyzz Mail — Unified Multi-Mailbox Email Service Layer
  *
- * Mengelola seluruh operasi email sungguhan (Inbox, Sent, Drafts, Starred, Spam, Trash,
- * Thread Detail, Search, Send, Reply, Reply All, Forward, Save Draft, Actions, Attachments, Stats)
- * dengan Google Gmail API (OAuth 2.0) dan PHPMailer SMTP Gmail (App Password, SSL:465).
+ * - Mendukung banyak akun email (mailboxes) yang dipilih user
+ * - Menegakkan kuota kirim harian per paket (Free 10, Lite 50, Pro 100, Business 200)
+ * - GAGAL KIRIM TIDAK MENGURANGI KUOTA HARIAN!
+ * - Terima pesan TANPA BATASAN untuk semua paket
+ * - Watermark otomatis untuk paket Free ("Dikirim Menggunakan Aplikasi Skyzz Mail")
+ * - Cache server-side untuk Inbox/Folder & Dashboard Stats (performa cepat)
+ * - Fallback log lokal Terkirim jika php-imap tidak aktif di hosting
  */
 
 declare(strict_types=1);
@@ -17,10 +21,9 @@ if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === basename(__FILE__)) {
 require_once __DIR__ . '/gmail-client.php';
 require_once __DIR__ . '/smtp-imap-service.php';
 require_once __DIR__ . '/email-renderer.php';
+require_once __DIR__ . '/cache.php';
+require_once __DIR__ . '/saas.php';
 
-/**
- * Helper URL-safe Base64 decode & encode standar Gmail API.
- */
 function gmail_base64url_encode(string $data): string
 {
     return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
@@ -36,26 +39,18 @@ function gmail_base64url_decode(string $data): string
     return base64_decode($replaced) ?: '';
 }
 
-/**
- * Cek apakah mode aktif adalah App Password (PHPMailer SMTP Gmail).
- */
-function is_app_password_mode(): bool
+function is_app_password_mode(?array $mailbox = null): bool
 {
-    return get_setting('mail_connection_mode', 'oauth') === 'app_password';
+    $mb = $mailbox ?? get_effective_mailbox();
+    return ($mb['provider_mode'] ?? get_setting('mail_connection_mode', 'app_password')) === 'app_password';
 }
 
-/**
- * Buat instance Google\Service\Gmail terautentikasi.
- */
 function get_gmail_api_service(): \Google\Service\Gmail
 {
     $client = get_authenticated_google_client();
     return new \Google\Service\Gmail($client);
 }
 
-/**
- * Encode header UTF-8 (Subjek & Nama) sesuai RFC 2047.
- */
 function mime_encode_header(string $value): string
 {
     $clean = str_replace(["\r", "\n"], ' ', trim($value));
@@ -67,19 +62,19 @@ function mime_encode_header(string $value): string
 
 /**
  * Bangun dokumen email RFC 2822 MIME lengkap untuk Gmail API / Drafts.
- * Memprioritaskan PHPMailer agar header From, Sender, Reply-To, Message-ID, MIME-Version, dan Content-Type konsisten tanpa duplikasi.
  */
-function build_rfc2822_mime(array $params): string
+function build_rfc2822_mime(array $params, ?array $mailbox = null): string
 {
     if (is_phpmailer_installed()) {
-        $built = phpmailer_build_raw_mime($params);
+        $built = phpmailer_build_raw_mime($params, $mailbox);
         if ($built !== '') {
             return $built;
         }
     }
 
-    $officialName  = DEFAULT_OFFICIAL_NAME;
-    $supportEmail  = strtolower(DEFAULT_OFFICIAL_GMAIL);
+    $mb           = $mailbox ?? get_effective_mailbox();
+    $officialName = trim((string) ($params['from_name'] ?? '')) ?: (string) ($mb['display_name'] ?? DEFAULT_OFFICIAL_NAME);
+    $supportEmail = strtolower(trim((string) ($mb['email'] ?? DEFAULT_OFFICIAL_GMAIL)));
 
     $toList        = $params['to'] ?? [];
     $ccList        = $params['cc'] ?? [];
@@ -105,9 +100,9 @@ function build_rfc2822_mime(array $params): string
     }
     $headers[] = 'Subject: ' . mime_encode_header($subject);
     $headers[] = 'Date: ' . date('r');
-    $headers[] = 'Message-ID: <ss-' . bin2hex(random_bytes(12)) . '@gmail.com>';
+    $headers[] = 'Message-ID: <skz-' . bin2hex(random_bytes(12)) . '@gmail.com>';
     $headers[] = 'MIME-Version: 1.0';
-    $headers[] = 'X-Mailer: Support Septian Mailer';
+    $headers[] = 'X-Mailer: Skyzz Mail';
 
     if ($inReplyTo !== '') {
         $headers[] = 'In-Reply-To: ' . str_replace(["\r", "\n"], '', $inReplyTo);
@@ -116,7 +111,7 @@ function build_rfc2822_mime(array $params): string
         $headers[] = 'References: ' . str_replace(["\r", "\n"], '', $references);
     }
 
-    $altBoundary = 'ss_alt_' . bin2hex(random_bytes(10));
+    $altBoundary = 'skz_alt_' . bin2hex(random_bytes(10));
 
     $altPart  = "--{$altBoundary}\r\n";
     $altPart .= "Content-Type: text/plain; charset=UTF-8\r\n";
@@ -134,7 +129,7 @@ function build_rfc2822_mime(array $params): string
         return implode("\r\n", $headers) . "\r\n\r\n" . $altPart;
     }
 
-    $mixBoundary = 'ss_mix_' . bin2hex(random_bytes(10));
+    $mixBoundary = 'skz_mix_' . bin2hex(random_bytes(10));
     $headers[] = 'Content-Type: multipart/mixed; boundary="' . $mixBoundary . '"';
 
     $body  = "--{$mixBoundary}\r\n";
@@ -156,9 +151,6 @@ function build_rfc2822_mime(array $params): string
     return implode("\r\n", $headers) . "\r\n\r\n" . $body;
 }
 
-/**
- * Ekstrak header spesifik dari objek Gmail MessagePart.
- */
 function gmail_extract_headers(array $headersList): array
 {
     $map = [];
@@ -169,9 +161,6 @@ function gmail_extract_headers(array $headersList): array
     return $map;
 }
 
-/**
- * Ekstrak isi HTML, Plain Text, dan daftar lampiran dari payload Gmail API secara rekursif.
- */
 function gmail_extract_payload_parts(\Google\Service\Gmail\MessagePart $payload, string $messageId): array
 {
     $html        = '';
@@ -217,9 +206,6 @@ function gmail_extract_payload_parts(\Google\Service\Gmail\MessagePart $payload,
     ];
 }
 
-/**
- * Map folder aplikasi ke Gmail Label ID.
- */
 function gmail_folder_label_id(string $folder): ?string
 {
     return match (strtolower($folder)) {
@@ -234,66 +220,150 @@ function gmail_folder_label_id(string $folder): ?string
 }
 
 /**
- * Ambil statistik kotak surat sungguhan dari Gmail (Inbox, Unread, Sent, Drafts, Starred, Spam, Trash).
+ * Ambil statistik kotak surat dengan server-side cache (60 detik).
  */
-function mail_get_dashboard_stats(): array
+function mail_get_dashboard_stats(bool $forceRefresh = false, ?array $mailbox = null): array
 {
-    if (is_app_password_mode()) {
-        return imap_get_mailbox_stats();
-    }
+    $mb    = $mailbox ?? get_effective_mailbox();
+    $mbId  = (int) ($mb['id'] ?? 0);
+    $cacheKey = 'mb_' . $mbId . '_stats';
 
-    $service = get_gmail_api_service();
-    $labels  = [
-        'INBOX'   => ['total' => 'inbox_total', 'unread' => 'inbox_unread'],
-        'SENT'    => ['total' => 'sent_total'],
-        'DRAFT'   => ['total' => 'drafts_total'],
-        'STARRED' => ['total' => 'starred_total'],
-        'SPAM'    => ['total' => 'spam_total'],
-        'TRASH'   => ['total' => 'trash_total'],
-    ];
-
-    $stats = [
-        'inbox_total'   => 0,
-        'inbox_unread'  => 0,
-        'sent_total'    => 0,
-        'drafts_total'  => 0,
-        'starred_total' => 0,
-        'spam_total'    => 0,
-        'trash_total'   => 0,
-    ];
-
-    foreach ($labels as $labelId => $keys) {
-        try {
-            $lbl = $service->users_labels->get('me', $labelId);
-            $stats[$keys['total']] = (int) $lbl->getMessagesTotal();
-            if (isset($keys['unread'])) {
-                $stats[$keys['unread']] = (int) $lbl->getMessagesUnread();
-            }
-        } catch (Throwable $e) {
-            app_log('warning', 'Gagal membaca label Gmail ' . $labelId . ': ' . $e->getMessage());
+    if (!$forceRefresh) {
+        $cached = cache_get($cacheKey);
+        if (is_array($cached)) {
+            return $cached;
         }
     }
 
+    if (is_app_password_mode($mb)) {
+        $stats = imap_get_mailbox_stats($mb);
+    } else {
+        $service = get_gmail_api_service();
+        $labels  = [
+            'INBOX'   => ['total' => 'inbox_total', 'unread' => 'inbox_unread'],
+            'SENT'    => ['total' => 'sent_total'],
+            'DRAFT'   => ['total' => 'drafts_total'],
+            'STARRED' => ['total' => 'starred_total'],
+            'SPAM'    => ['total' => 'spam_total'],
+            'TRASH'   => ['total' => 'trash_total'],
+        ];
+
+        $stats = [
+            'inbox_total'   => 0,
+            'inbox_unread'  => 0,
+            'sent_total'    => 0,
+            'drafts_total'  => 0,
+            'starred_total' => 0,
+            'spam_total'    => 0,
+            'trash_total'   => 0,
+        ];
+
+        foreach ($labels as $labelId => $keys) {
+            try {
+                $lbl = $service->users_labels->get('me', $labelId);
+                $stats[$keys['total']] = (int) $lbl->getMessagesTotal();
+                if (isset($keys['unread'])) {
+                    $stats[$keys['unread']] = (int) $lbl->getMessagesUnread();
+                }
+            } catch (Throwable $e) {
+                app_log('warning', 'Gagal membaca label Gmail ' . $labelId . ': ' . $e->getMessage());
+            }
+        }
+    }
+
+    // Jika sent_total dari IMAP/Gmail 0 (mis. php-imap tidak aktif), lengkapi dari log lokal
+    if ((int) ($stats['sent_total'] ?? 0) === 0) {
+        try {
+            $localCnt = (int) db()->query("SELECT COUNT(*) FROM sent_email_logs WHERE status = 'sent'")->fetchColumn();
+            $stats['sent_total'] = $localCnt;
+        } catch (Throwable $e) {
+        }
+    }
+
+    cache_set($cacheKey, $stats, 60);
     return $stats;
 }
 
 /**
- * Ambil daftar email berdasarkan folder dan/atau kueri pencarian (mendukung pagination Gmail).
+ * Ambil daftar email berdasarkan folder dan/atau pencarian (dengan cache 45 detik & fallback log Terkirim).
+ * Terima pesan (Inbox) berlaku TANPA BATASAN untuk semua paket.
  */
-function mail_list_messages(string $folder = 'inbox', int $maxResults = 20, ?string $pageToken = null, string $searchQuery = ''): array
-{
+function mail_list_messages(
+    string $folder = 'inbox',
+    int $maxResults = 20,
+    ?string $pageToken = null,
+    string $searchQuery = '',
+    bool $forceRefresh = false,
+    ?array $mailbox = null
+): array {
     $maxResults = max(5, min(50, $maxResults));
+    $mb         = $mailbox ?? get_effective_mailbox();
+    $mbId       = (int) ($mb['id'] ?? 0);
+    $actor      = function_exists('current_admin') ? current_admin() : null;
+    $isSuper    = is_superadmin($actor);
+    $folderLow  = strtolower($folder);
 
-    if (is_app_password_mode()) {
-        return imap_list_messages($folder, $maxResults, $pageToken, $searchQuery);
+    $cacheKey = sprintf(
+        'mb_%d_list_%s_%d_%s_%s',
+        $mbId,
+        $folderLow,
+        $maxResults,
+        (string) ($pageToken ?? '0'),
+        md5(strtolower(trim($searchQuery)) . ':' . ($isSuper ? 's' : (string) ($actor['id'] ?? '0')))
+    );
+
+    if (!$forceRefresh) {
+        $cached = cache_get($cacheKey);
+        if (is_array($cached)) {
+            $cached['from_cache'] = true;
+            return $cached;
+        }
     }
 
+    if (is_app_password_mode($mb)) {
+        try {
+            $res = imap_list_messages($folderLow, $maxResults, $pageToken, $searchQuery, $mb);
+            // Untuk folder 'sent', jika IMAP kosong tapi ada log terkirim lokal, tampilkan log lokal
+            if ($folderLow === 'sent' && empty($res['messages'])) {
+                $localRes = get_local_sent_messages(
+                    $actor ? (int) $actor['id'] : null,
+                    $mbId,
+                    $isSuper,
+                    $maxResults,
+                    max(0, (int) ($pageToken ?: 0)),
+                    $searchQuery
+                );
+                if (!empty($localRes['messages'])) {
+                    $res = $localRes;
+                }
+            }
+            cache_set($cacheKey, $res, 45);
+            return $res;
+        } catch (Throwable $e) {
+            if ($folderLow === 'sent') {
+                // Fallback mulus ke riwayat Terkirim lokal agar Terkirim tidak pernah error 500
+                $localRes = get_local_sent_messages(
+                    $actor ? (int) $actor['id'] : null,
+                    $mbId,
+                    $isSuper,
+                    $maxResults,
+                    max(0, (int) ($pageToken ?: 0)),
+                    $searchQuery
+                );
+                $localRes['notice'] = 'Menampilkan riwayat Terkirim aplikasi (IMAP sedang tidak tersedia: ' . $e->getMessage() . ').';
+                return $localRes;
+            }
+            throw $e;
+        }
+    }
+
+    // Mode Gmail API (OAuth 2.0)
     $service = get_gmail_api_service();
     $params  = [
         'maxResults' => $maxResults,
     ];
 
-    $labelId = gmail_folder_label_id($folder);
+    $labelId = gmail_folder_label_id($folderLow);
     if ($labelId !== null) {
         $params['labelIds'] = [$labelId];
         if (in_array($labelId, ['SPAM', 'TRASH'], true)) {
@@ -308,7 +378,7 @@ function mail_list_messages(string $folder = 'inbox', int $maxResults = 20, ?str
     }
 
     $draftMap = [];
-    if (strtolower($folder) === 'drafts') {
+    if ($folderLow === 'drafts') {
         $draftList = $service->users_drafts->listUsersDrafts('me', array_filter([
             'maxResults' => $maxResults,
             'pageToken'  => $pageToken,
@@ -364,7 +434,7 @@ function mail_list_messages(string $folder = 'inbox', int $maxResults = 20, ?str
                 'id'              => $msgId,
                 'draft_id'        => $draftMap[$msgId] ?? null,
                 'thread_id'       => (string) $msg->getThreadId(),
-                'from_name'       => $from['name'] ?: '(Tanpa Nama)',
+                'from_name'       => $folderLow === 'sent' ? ('Kepada: ' . ((string) ($headers['to'] ?? '(Penerima)'))) : ($from['name'] ?: '(Tanpa Nama)'),
                 'from_email'      => $from['email'],
                 'to'              => (string) ($headers['to'] ?? ''),
                 'subject'         => ($headers['subject'] ?? '') !== '' ? (string) $headers['subject'] : '(Tanpa Subjek)',
@@ -378,25 +448,34 @@ function mail_list_messages(string $folder = 'inbox', int $maxResults = 20, ?str
                 'labels'          => $labels,
             ];
         } catch (Throwable $e) {
-            app_log('warning', 'Lewati pesan Gmail ' . $msgId . ' di folder ' . $folder . ': ' . $e->getMessage());
+            app_log('warning', 'Lewati pesan Gmail ' . $msgId . ' di folder ' . $folderLow . ': ' . $e->getMessage());
         }
     }
 
-    return [
+    $result = [
         'messages'        => $messages,
         'next_page_token' => $nextToken ?: null,
         'result_estimate' => $estimate,
         'transport'       => 'gmail_api_oauth',
     ];
+    cache_set($cacheKey, $result, 45);
+    return $result;
 }
 
 /**
- * Baca seluruh percakapan (thread) berdasarkan Message ID atau Thread ID.
+ * Baca seluruh percakapan (thread) berdasarkan Message ID (termasuk local:<id> dari sent_email_logs).
  */
-function mail_get_thread_detail(string $messageId, bool $markAsRead = true): array
+function mail_get_thread_detail(string $messageId, bool $markAsRead = true, ?array $mailbox = null): array
 {
-    if (is_app_password_mode()) {
-        return imap_get_message_detail($messageId);
+    if (str_starts_with($messageId, 'local:')) {
+        $localId = (int) substr($messageId, 6);
+        $viewer  = function_exists('current_admin') ? current_admin() : null;
+        return get_local_sent_message_detail($localId, $viewer);
+    }
+
+    $mb = $mailbox ?? get_effective_mailbox();
+    if (is_app_password_mode($mb)) {
+        return imap_get_message_detail($messageId, $mb);
     }
 
     $service = get_gmail_api_service();
@@ -468,13 +547,25 @@ function mail_get_thread_detail(string $messageId, bool $markAsRead = true): arr
 }
 
 /**
- * Kirim email sungguhan (Compose, Reply, Reply All, Forward) melalui:
- * - PHPMailer SMTP Gmail terautentikasi (smtp.gmail.com:465 SSL, App Password), ATAU
- * - Google Gmail API (OAuth 2.0)
- * Tidak pernah memakai PHP mail(), sendmail(), atau SMTP lokal hosting.
+ * Kirim email sungguhan (Web Compose/Reply/Forward maupun REST API).
+ * - Mengecek kuota harian pengguna sebelum kirim
+ * - Jika pengiriman GAGAL, kuota harian TIDAK berkurang (hanya status='sent' yang dihitung)
+ * - Paket Free otomatis menambahkan watermark: "Dikirim Menggunakan Aplikasi Skyzz Mail"
+ * - Otomatis menyinkronkan salinan ke folder Terkirim Gmail & riwayat lokal sent_email_logs
  */
 function mail_send_email(array $payload, bool $forceSmtp = false): array
 {
+    $actor   = is_array($payload['actor'] ?? null) ? $payload['actor'] : (function_exists('current_admin') ? current_admin() : null);
+    $mailbox = is_array($payload['mailbox'] ?? null) ? $payload['mailbox'] : get_effective_mailbox($actor);
+    $sentVia = ($payload['sent_via'] ?? 'web') === 'api' ? 'api' : 'web';
+
+    // 1. Cek kuota kirim harian (Superadmin tidak dibatasi)
+    $plan = null;
+    if ($actor) {
+        $quota = check_user_send_quota($actor);
+        $plan  = $quota['plan'];
+    }
+
     $toList  = parse_email_list((string) ($payload['to'] ?? ''));
     $ccList  = parse_email_list((string) ($payload['cc'] ?? ''));
     $bccList = parse_email_list((string) ($payload['bcc'] ?? ''));
@@ -497,109 +588,193 @@ function mail_send_email(array $payload, bool $forceSmtp = false): array
     $inReplyTo    = trim((string) ($payload['in_reply_to'] ?? ''));
     $references   = trim((string) ($payload['references'] ?? ''));
 
+    // Nama pengirim kustom (dari parameter, profil user, atau mailbox)
+    $senderName = trim((string) ($payload['from_name'] ?? ''))
+        ?: trim((string) ($actor['custom_sender_name'] ?? ''))
+        ?: trim((string) ($mailbox['display_name'] ?? ''))
+        ?: get_setting('official_name', DEFAULT_OFFICIAL_NAME);
+    $senderEmail = strtolower(trim((string) ($mailbox['email'] ?? DEFAULT_OFFICIAL_GMAIL)));
+
+    // Watermark wajib untuk paket Free
+    $watermarkText = '';
+    if ($plan && !empty($plan['has_watermark'])) {
+        $watermarkText = trim((string) ($plan['watermark_text'] ?? '')) ?: FREE_WATERMARK_DEFAULT;
+    }
+
     if (!isset($variables['email_penerima'])) {
         $variables['email_penerima'] = $toList[0];
     }
     if (!isset($variables['nama_penerima']) || trim((string) $variables['nama_penerima']) === '') {
         $variables['nama_penerima'] = explode('@', $toList[0])[0];
     }
+    if (!isset($variables['nama_pengirim']) || trim((string) $variables['nama_pengirim']) === '') {
+        $variables['nama_pengirim'] = $senderName;
+    }
 
-    // Pertahankan seluruh template HTML resmi Support Septian (logo, footer, alamat, tanda tangan)
-    $finalHtml = $wrapTemplate
-        ? render_professional_email_html($bodyHtml, $subject, $variables, true, $quotedHtml)
-        : sanitize_outgoing_body_html($bodyHtml);
+    $renderOpts = [
+        'sender_name'    => $senderName,
+        'sender_email'   => $senderEmail,
+        'watermark_text' => $watermarkText,
+    ];
+    if ($actor && !empty($actor['custom_signature'])) {
+        $renderOpts['signature'] = (string) $actor['custom_signature'];
+    }
+    if ($actor && isset($actor['custom_footer_note']) && trim((string) $actor['custom_footer_note']) !== '') {
+        $renderOpts['footer_note'] = (string) $actor['custom_footer_note'];
+    }
+
+    if ($wrapTemplate) {
+        $finalHtml = render_professional_email_html($bodyHtml, $subject, $variables, true, $quotedHtml, $renderOpts);
+    } else {
+        $resolved  = replace_template_variables($bodyHtml, array_merge($variables, ['subjek' => $subject]));
+        $finalHtml = sanitize_outgoing_body_html($resolved);
+        if ($watermarkText !== '') {
+            $finalHtml = append_plain_watermark_html($finalHtml, $watermarkText);
+        }
+    }
 
     $plainBody = html_to_plain_text($finalHtml);
+    $preview   = safe_substr(preg_replace('/\s+/', ' ', $plainBody) ?? $plainBody, 0, 260);
+    $mbId      = (int) ($mailbox['id'] ?? 0);
 
-    // Jalur PHPMailer SMTP Gmail terautentikasi (wajib untuk mode App Password atau forceSmtp)
-    if ($forceSmtp || is_app_password_mode()) {
-        $res = phpmailer_send_email([
-            'to'          => $toList,
-            'cc'          => $ccList,
-            'bcc'         => $bccList,
-            'subject'     => $subject,
-            'html'        => $finalHtml,
-            'plain'       => $plainBody,
-            'in_reply_to' => $inReplyTo,
-            'references'  => $references,
-            'attachments' => $attachments,
-        ], !empty($payload['capture_debug']));
+    try {
+        if ($forceSmtp || is_app_password_mode($mailbox)) {
+            $res = phpmailer_send_email([
+                'to'          => $toList,
+                'cc'          => $ccList,
+                'bcc'         => $bccList,
+                'subject'     => $subject,
+                'html'        => $finalHtml,
+                'plain'       => $plainBody,
+                'from_name'   => $senderName,
+                'in_reply_to' => $inReplyTo,
+                'references'  => $references,
+                'attachments' => $attachments,
+            ], !empty($payload['capture_debug']), $mailbox);
+        } else {
+            $rawMime = build_rfc2822_mime([
+                'to'          => $toList,
+                'cc'          => $ccList,
+                'bcc'         => $bccList,
+                'subject'     => $subject,
+                'html'        => $finalHtml,
+                'plain'       => $plainBody,
+                'from_name'   => $senderName,
+                'in_reply_to' => $inReplyTo,
+                'references'  => $references,
+                'attachments' => $attachments,
+            ], $mailbox);
+
+            $service = get_gmail_api_service();
+            $gmailMessage = new \Google\Service\Gmail\Message();
+            $gmailMessage->setRaw(gmail_base64url_encode($rawMime));
+            if ($threadId !== '') {
+                $gmailMessage->setThreadId($threadId);
+            }
+
+            $sent = $service->users_messages->send('me', $gmailMessage);
+            $res = [
+                'id'                 => (string) $sent->getId(),
+                'thread_id'          => (string) $sent->getThreadId(),
+                'transport'          => 'gmail_api_oauth',
+                'smtp_connected'     => true,
+                'smtp_authenticated' => true,
+                'account_email'      => $senderEmail,
+                'from_email'         => $senderEmail,
+                'from_name'          => $senderName,
+                'message_id'         => (string) $sent->getId(),
+                'imap_sent_synced'   => true, // Gmail API selalu mencatat di Sent Gmail
+            ];
+        }
+
+        // Pengiriman SUKSES -> catat status='sent' (baru di sinilah kuota harian terpakai 1)
+        record_sent_email_log([
+            'user_id'          => $actor ? (int) $actor['id'] : null,
+            'mailbox_id'       => $mbId,
+            'from_email'       => $res['from_email'] ?? $senderEmail,
+            'to_emails'        => implode(', ', $toList),
+            'cc_emails'        => implode(', ', $ccList),
+            'subject'          => $subject,
+            'body_preview'     => $preview,
+            'body_html'        => $finalHtml,
+            'transport'        => $res['transport'] ?? 'phpmailer_gmail_smtp',
+            'message_id'       => $res['message_id'] ?? $res['id'] ?? '',
+            'imap_sent_synced' => !empty($res['imap_sent_synced']),
+            'sent_via'         => $sentVia,
+            'status'           => 'sent',
+        ]);
+
+        // Bersihkan cache daftar email & statistik agar folder Terkirim langsung terbaru
+        cache_forget_prefix('mb_' . $mbId . '_');
 
         log_activity(
             'email_sent',
-            'Email terkirim via PHPMailer SMTP Gmail (smtp.gmail.com:465 SSL) ke ' . implode(', ', $toList) . ' — Subjek: ' . $subject,
+            'Email terkirim (' . strtoupper($sentVia) . ') dari ' . $senderEmail . ' ke ' . implode(', ', $toList) . ' — Subjek: ' . $subject,
             'email',
-            $res['id']
+            (string) ($res['id'] ?? ''),
+            'success',
+            $actor ? (int) $actor['id'] : null
         );
+
+        if ($actor) {
+            $afterQuota = get_user_quota_status($actor);
+            $res['quota'] = [
+                'plan'        => $afterQuota['plan']['name'],
+                'used_today'  => $afterQuota['used_today'],
+                'daily_limit' => $afterQuota['daily_limit'],
+                'remaining'   => $afterQuota['remaining'],
+                'unlimited'   => $afterQuota['is_unlimited'],
+            ];
+        }
+
         return $res;
+    } catch (Throwable $e) {
+        // Pengiriman GAGAL -> catat status='failed' sehingga KUOTA HARIAN TIDAK BERKURANG!
+        record_sent_email_log([
+            'user_id'          => $actor ? (int) $actor['id'] : null,
+            'mailbox_id'       => $mbId,
+            'from_email'       => $senderEmail,
+            'to_emails'        => implode(', ', $toList),
+            'cc_emails'        => implode(', ', $ccList),
+            'subject'          => $subject,
+            'body_preview'     => $preview,
+            'transport'        => $forceSmtp || is_app_password_mode($mailbox) ? 'phpmailer_gmail_smtp' : 'gmail_api_oauth',
+            'imap_sent_synced' => false,
+            'sent_via'         => $sentVia,
+            'status'           => 'failed',
+            'error_message'    => $e->getMessage(),
+        ]);
+
+        throw $e;
     }
-
-    // Jalur Gmail API OAuth 2.0 (jika mode OAuth aktif dan terhubung)
-    $rawMime = build_rfc2822_mime([
-        'to'          => $toList,
-        'cc'          => $ccList,
-        'bcc'         => $bccList,
-        'subject'     => $subject,
-        'html'        => $finalHtml,
-        'plain'       => $plainBody,
-        'in_reply_to' => $inReplyTo,
-        'references'  => $references,
-        'attachments' => $attachments,
-    ]);
-
-    $service = get_gmail_api_service();
-    $gmailMessage = new \Google\Service\Gmail\Message();
-    $gmailMessage->setRaw(gmail_base64url_encode($rawMime));
-    if ($threadId !== '') {
-        $gmailMessage->setThreadId($threadId);
-    }
-
-    $sent = $service->users_messages->send('me', $gmailMessage);
-
-    log_activity(
-        'email_sent',
-        'Email terkirim via Gmail API OAuth 2.0 ke ' . implode(', ', $toList) . ' — Subjek: ' . $subject,
-        'email',
-        (string) $sent->getId()
-    );
-
-    return [
-        'id'                 => (string) $sent->getId(),
-        'thread_id'          => (string) $sent->getThreadId(),
-        'transport'          => 'gmail_api_oauth',
-        'smtp_connected'     => true,
-        'smtp_authenticated' => true,
-        'account_email'      => DEFAULT_OFFICIAL_GMAIL,
-        'from_email'         => DEFAULT_OFFICIAL_GMAIL,
-        'from_name'          => DEFAULT_OFFICIAL_NAME,
-    ];
 }
 
 /**
- * Kirim satu email percobaan diagnostik ke alamat email admin lain (tidak pernah mengulang otomatis).
+ * Kirim satu email percobaan diagnostik ke alamat email admin lain (tidak mengulang otomatis).
  */
-function send_diagnostic_test_email(string $recipientEmail, string $adminName = DEFAULT_OFFICIAL_NAME): array
+function send_diagnostic_test_email(string $recipientEmail, string $adminName = DEFAULT_OFFICIAL_NAME, ?array $mailbox = null): array
 {
     $recipientEmail = strtolower(trim($recipientEmail));
     if (!filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
         throw new RuntimeException('Alamat email tujuan tes tidak valid.');
     }
 
-    $appPassSet = trim(get_setting('gmail_app_password_secret', '')) !== '';
-    $oauthToken = get_stored_oauth_token();
-    $useSmtp    = is_app_password_mode() || $appPassSet || !$oauthToken || $oauthToken['status'] !== 'connected';
+    $mb         = $mailbox ?? get_effective_mailbox();
+    $appPassSet = trim((string) ($mb['smtp_password'] ?? get_setting('gmail_app_password_secret', ''))) !== '';
+    $oauthToken = get_stored_oauth_token((string) ($mb['email'] ?? ''));
+    $useSmtp    = is_app_password_mode($mb) || $appPassSet || !$oauthToken || $oauthToken['status'] !== 'connected';
 
-    $subject = 'Uji Pengiriman & Verifikasi DKIM Support Septian (' . date('d M Y H:i') . ' WIB)';
+    $appName = get_setting('app_name', DEFAULT_APP_NAME);
+    $subject = 'Uji Pengiriman & Verifikasi DKIM ' . $appName . ' (' . date('d M Y H:i') . ' WIB)';
     $bodyHtml = '<p>Halo <strong>{nama_penerima}</strong>,</p>'
-        . '<p>Ini adalah <strong>email uji pengiriman diagnostik</strong> dari aplikasi <strong>Support Septian F. R.</strong>.</p>'
-        . '<p>Pengiriman ini dijalankan melalui koneksi terautentikasi untuk memverifikasi keaslian pengirim, header MIME, serta kelulusan tanda tangan DKIM Google (<code>DKIM=PASS</code>).</p>'
+        . '<p>Ini adalah <strong>email uji pengiriman diagnostik</strong> dari aplikasi <strong>' . e($appName) . '</strong>.</p>'
         . '<ul>'
-        . '<li><strong>Akun Pengirim Resmi:</strong> ' . e(DEFAULT_OFFICIAL_GMAIL) . '</li>'
-        . '<li><strong>Nama Pengirim:</strong> ' . e(DEFAULT_OFFICIAL_NAME) . '</li>'
-        . '<li><strong>Metode Pengiriman:</strong> ' . ($useSmtp ? 'PHPMailer SMTP (smtp.gmail.com:465 SSL)' : 'Google Gmail API (OAuth 2.0)') . '</li>'
+        . '<li><strong>Akun Pengirim:</strong> ' . e((string) ($mb['email'] ?? DEFAULT_OFFICIAL_GMAIL)) . '</li>'
+        . '<li><strong>Nama Pengirim:</strong> ' . e((string) ($mb['display_name'] ?? $appName)) . '</li>'
+        . '<li><strong>Metode:</strong> ' . ($useSmtp ? 'PHPMailer SMTP (' . e((string) ($mb['smtp_host'] ?? 'smtp.gmail.com')) . ':' . (int) ($mb['smtp_port'] ?? 465) . ')' : 'Google Gmail API (OAuth 2.0)') . '</li>'
         . '<li><strong>Waktu Uji:</strong> ' . e(format_tanggal_id(date('Y-m-d H:i:s'), true)) . '</li>'
         . '</ul>'
-        . '<p>Silakan buka menu <strong>Lainnya (&vellip;) &rarr; Tampilkan Asli (Show Original)</strong> pada email ini di Gmail untuk memastikan <code>DKIM: PASS</code>.</p>';
+        . '<p>Silakan buka menu <strong>Lainnya (&vellip;) &rarr; Tampilkan Asli (Show Original)</strong> di Gmail untuk memastikan <code>DKIM: PASS</code> dan cek folder <strong>Terkirim / Sent</strong> akun pengirim.</p>';
 
     $result = mail_send_email([
         'to'            => $recipientEmail,
@@ -607,10 +782,11 @@ function send_diagnostic_test_email(string $recipientEmail, string $adminName = 
         'body_html'     => $bodyHtml,
         'wrap_template' => true,
         'capture_debug' => true,
+        'mailbox'       => $mb,
         'variables'     => [
             'nama_penerima'  => explode('@', $recipientEmail)[0],
             'email_penerima' => $recipientEmail,
-            'nama_pengirim'  => $adminName ?: DEFAULT_OFFICIAL_NAME,
+            'nama_pengirim'  => $adminName ?: $appName,
             'subjek'         => $subject,
         ],
     ], $useSmtp);
@@ -626,10 +802,11 @@ function send_diagnostic_test_email(string $recipientEmail, string $adminName = 
 }
 
 /**
- * Simpan draft sungguhan ke Gmail Drafts.
+ * Simpan draft ke Gmail / IMAP Drafts.
  */
-function mail_save_draft(array $payload): array
+function mail_save_draft(array $payload, ?array $mailbox = null): array
 {
+    $mb          = $mailbox ?? get_effective_mailbox();
     $toList      = parse_email_list((string) ($payload['to'] ?? ''));
     $ccList      = parse_email_list((string) ($payload['cc'] ?? ''));
     $bccList     = parse_email_list((string) ($payload['bcc'] ?? ''));
@@ -640,7 +817,10 @@ function mail_save_draft(array $payload): array
     $draftId     = trim((string) ($payload['draft_id'] ?? ''));
     $threadId    = trim((string) ($payload['thread_id'] ?? ''));
 
-    $finalHtml = render_professional_email_html($bodyHtml, $subject, $variables, true);
+    $finalHtml = render_professional_email_html($bodyHtml, $subject, $variables, true, '', [
+        'sender_name'  => (string) ($mb['display_name'] ?? DEFAULT_OFFICIAL_NAME),
+        'sender_email' => (string) ($mb['email'] ?? DEFAULT_OFFICIAL_GMAIL),
+    ]);
 
     $rawMime = build_rfc2822_mime([
         'to'          => $toList,
@@ -649,10 +829,13 @@ function mail_save_draft(array $payload): array
         'subject'     => $subject,
         'html'        => $finalHtml,
         'attachments' => $attachments,
-    ]);
+    ], $mb);
 
-    if (is_app_password_mode()) {
-        $res = imap_save_draft($rawMime);
+    $mbId = (int) ($mb['id'] ?? 0);
+
+    if (is_app_password_mode($mb)) {
+        $res = imap_save_draft($rawMime, $mb);
+        cache_forget_prefix('mb_' . $mbId . '_');
         log_activity('draft_saved', 'Draft email disimpan via IMAP — Subjek: ' . $subject, 'draft', $res['draft_id']);
         return $res;
     }
@@ -673,6 +856,7 @@ function mail_save_draft(array $payload): array
         $saved = $service->users_drafts->create('me', $draft);
     }
 
+    cache_forget_prefix('mb_' . $mbId . '_');
     log_activity('draft_saved', 'Draft email disimpan ke Gmail — Subjek: ' . $subject, 'draft', (string) $saved->getId());
 
     return [
@@ -683,12 +867,33 @@ function mail_save_draft(array $payload): array
 }
 
 /**
- * Jalankan aksi pada pesan Gmail: mark_read, mark_unread, star, unstar, archive, trash, untrash, spam, not_spam, delete.
+ * Jalankan aksi pada pesan (termasuk hapus riwayat lokal local:<id>).
  */
-function mail_perform_message_action(string $messageId, string $action): bool
+function mail_perform_message_action(string $messageId, string $action, ?array $mailbox = null): bool
 {
-    if (is_app_password_mode()) {
-        $ok = imap_perform_action($messageId, $action);
+    $mb   = $mailbox ?? get_effective_mailbox();
+    $mbId = (int) ($mb['id'] ?? 0);
+
+    if (str_starts_with($messageId, 'local:')) {
+        $localId = (int) substr($messageId, 6);
+        if (in_array($action, ['trash', 'delete'], true)) {
+            $actor = function_exists('current_admin') ? current_admin() : null;
+            if (is_superadmin($actor)) {
+                $stmt = db()->prepare('DELETE FROM sent_email_logs WHERE id = :id');
+                $stmt->execute([':id' => $localId]);
+            } elseif ($actor) {
+                $stmt = db()->prepare('DELETE FROM sent_email_logs WHERE id = :id AND user_id = :uid');
+                $stmt->execute([':id' => $localId, ':uid' => (int) $actor['id']]);
+            }
+            cache_forget_prefix('mb_' . $mbId . '_');
+            return true;
+        }
+        return true;
+    }
+
+    if (is_app_password_mode($mb)) {
+        $ok = imap_perform_action($messageId, $action, $mb);
+        cache_forget_prefix('mb_' . $mbId . '_');
         log_activity('email_action', "Aksi '{$action}' dijalankan pada pesan {$messageId} (IMAP).", 'email', $messageId);
         return $ok;
     }
@@ -756,6 +961,7 @@ function mail_perform_message_action(string $messageId, string $action): bool
             throw new RuntimeException('Aksi email tidak dikenal: ' . $action);
     }
 
+    cache_forget_prefix('mb_' . $mbId . '_');
     log_activity('email_action', "Aksi '{$action}' berhasil pada pesan {$messageId}.", 'email', $messageId);
     return true;
 }
@@ -763,10 +969,11 @@ function mail_perform_message_action(string $messageId, string $action): bool
 /**
  * Unduh file lampiran dari Gmail API atau IMAP.
  */
-function mail_download_attachment(string $messageId, string $attachmentId, string $fallbackFilename = 'lampiran'): array
+function mail_download_attachment(string $messageId, string $attachmentId, string $fallbackFilename = 'lampiran', ?array $mailbox = null): array
 {
-    if (is_app_password_mode()) {
-        return imap_download_attachment($messageId, $attachmentId);
+    $mb = $mailbox ?? get_effective_mailbox();
+    if (is_app_password_mode($mb)) {
+        return imap_download_attachment($messageId, $attachmentId, $mb);
     }
 
     $service = get_gmail_api_service();

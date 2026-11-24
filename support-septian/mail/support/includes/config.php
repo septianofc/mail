@@ -16,22 +16,26 @@ define('INCLUDES_PATH', APP_ROOT . '/includes');
 define('STORAGE_PATH', APP_ROOT . '/storage');
 define('TOKENS_PATH', STORAGE_PATH . '/tokens');
 define('LOGS_PATH', STORAGE_PATH . '/logs');
+define('CACHE_PATH', STORAGE_PATH . '/cache');
+define('UPLOADS_PATH', STORAGE_PATH . '/uploads');
 define('TEMPLATES_PATH', APP_ROOT . '/templates');
 define('BASE_PATH', '/mail/support');
 
-// Identitas Resmi Support Septian F. R.
-define('DEFAULT_APP_NAME', 'Support Septian');
-define('DEFAULT_OFFICIAL_NAME', 'Support Septian F. R.');
+// Identitas Default Aplikasi Skyzz Mail (dapat diubah Superadmin dari Pengaturan)
+define('DEFAULT_APP_NAME', 'Skyzz Mail');
+define('DEFAULT_OFFICIAL_NAME', 'Skyzz Mail');
 define('DEFAULT_OFFICIAL_GMAIL', 'support.septianfr@gmail.com');
 define('DEFAULT_WEBSITE_URL', 'https://septianfr.web.id');
 define('DEFAULT_APP_URL', 'https://septianfr.web.id/mail/support');
 define('DEFAULT_LOGO_URL', 'https://septianfr.web.id/logo.png');
 define('DEFAULT_ADDRESS', 'H4GM+4XX, Jl. PUK Muntur, Ranjeng, Kec. Losarang, Kabupaten Indramayu, Jawa Barat 45253');
 define('OAUTH_REDIRECT_URI', 'https://septianfr.web.id/mail/support/oauth/callback.php');
+define('FREE_WATERMARK_DEFAULT', 'Dikirim Menggunakan Aplikasi Skyzz Mail');
 
 // Batas keamanan
 define('MAX_ATTACHMENT_SIZE', 15 * 1024 * 1024); // 15 MB per file
 define('MAX_TOTAL_ATTACHMENTS_SIZE', 25 * 1024 * 1024); // 25 MB total
+define('MAX_IMAGE_UPLOAD_SIZE', 5 * 1024 * 1024); // 5 MB untuk gambar QRIS / bukti bayar
 define('LOGIN_MAX_ATTEMPTS', 5);
 define('LOGIN_LOCKOUT_MINUTES', 15);
 
@@ -176,7 +180,7 @@ function ss_render_fatal_error(string $type, string $message, string $file, int 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Diagnostik Error — Support Septian</title>
+<title>Diagnostik Error — Skyzz Mail</title>
 <style>
 body{margin:0;padding:24px;background:#f5f7fa;color:#202124;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;line-height:1.55}
 .box{max-width:680px;margin:32px auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;box-shadow:0 4px 16px rgba(15,23,42,.06)}
@@ -192,7 +196,7 @@ p{margin:0 0 14px;color:#4b5563;font-size:14px}
 <body>
 <div class="box">
   <h1>Terjadi Kesalahan Sistem (HTTP 500)</h1>
-  <p>Aplikasi <strong>Support Septian</strong> menangkap error agar tidak menampilkan layar kosong. Detail lengkap telah dicatat secara aman ke <code>storage/logs/php-error.log</code>.</p>
+  <p>Aplikasi <strong>Skyzz Mail</strong> menangkap error agar tidak menampilkan layar kosong. Detail lengkap telah dicatat secara aman ke <code>storage/logs/php-error.log</code>.</p>
   <div class="detail">
     <div class="row"><span class="lbl">Kode Referensi:</span> {$eRef}</div>
     <div class="row"><span class="lbl">Tipe Error:</span> {$eType}</div>
